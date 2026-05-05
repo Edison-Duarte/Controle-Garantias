@@ -8,25 +8,29 @@ st.set_page_config(page_title="Controle de Garantias", layout="wide")
 
 st.title("🛡️ Gestão de Garantias (Google Sheets)")
 
-# 2. Configuração do link (Link que você forneceu)
-URL_PLANILHA = "https://docs.google.com/spreadsheets/d/1N9KJSTcF6S4Mh7oIdHOmwq4MFkt3M-0TkPZ2VmMqY3Y/edit?usp=sharing"
+# 2. Link da Planilha (ID limpo para evitar erros de parâmetros)
+URL_PLANILHA = "https://docs.google.com/spreadsheets/d/1N9KJSTcF6S4Mh7oIdHOmwq4MFkt3M-0TkPZ2VmMqY3Y/edit"
 
-# 3. Conexão com o Google Sheets
+# 3. Conexão com Google Sheets
 conn = st.connection("gsheets", type=GSheetsConnection)
 
 def carregar_dados():
     try:
-        # Lendo a aba "Garantias" (conforme você nomeou)
-        # ttl=0 garante que ele busque dados novos sempre que a página recarregar
+        # Tenta ler a aba "Garantias" com G maiúsculo
+        # ttl=0 garante que os dados não fiquem em cache antigo
         return conn.read(spreadsheet=URL_PLANILHA, worksheet="Garantias", ttl=0)
-    except Exception as e:
-        st.error(f"Erro ao conectar com a planilha: {e}")
-        return pd.DataFrame(columns=['NF', 'Item', 'Fornecedor', 'data_compra', 'meses_garantia', 'data_vencimento'])
+    except Exception:
+        try:
+            # Caso a aba tenha outro nome, tenta ler a primeira aba disponível
+            return conn.read(spreadsheet=URL_PLANILHA, ttl=0)
+        except Exception as e:
+            st.error(f"Erro crítico de conexão: {e}")
+            return pd.DataFrame(columns=['NF', 'Item', 'Fornecedor', 'data_compra', 'meses_garantia', 'data_vencimento'])
 
 df = carregar_dados()
 
 # --- FORMULÁRIO DE CADASTRO ---
-with st.expander("📝 Cadastrar Nova Garantia"):
+with st.expander("📝 Cadastrar Nova Garantia", expanded=True):
     with st.form("form_cadastro", clear_on_submit=True):
         c1, c2, c3 = st.columns(3)
         nf = c1.text_input("Número da NF")
@@ -37,37 +41,41 @@ with st.expander("📝 Cadastrar Nova Garantia"):
         data_compra = c4.date_input("Data da Compra", value=date.today())
         garantia_meses = c5.number_input("Meses de Garantia", min_value=1, value=12)
         
-        if st.form_submit_button("Salvar no Google Sheets"):
+        if st.form_submit_button("Salvar Permanentemente"):
             if item and nf:
                 # Cálculo da data de vencimento
-                data_vencimento = pd.to_datetime(data_compra) + pd.DateOffset(months=int(garantia_meses))
+                dt_compra = pd.to_datetime(data_compra)
+                dt_vencimento = dt_compra + pd.DateOffset(months=int(garantia_meses))
                 
-                # Preparar linha para adicionar
-                novo_dado = pd.DataFrame([{
+                # Preparar nova linha
+                nova_linha = pd.DataFrame([{
                     "NF": str(nf),
                     "Item": item,
                     "Fornecedor": fornecedor,
                     "data_compra": data_compra.strftime('%Y-%m-%d'),
                     "meses_garantia": int(garantia_meses),
-                    "data_vencimento": data_vencimento.strftime('%Y-%m-%d')
+                    "data_vencimento": dt_vencimento.strftime('%Y-%m-%d')
                 }])
                 
-                # Combinar com os dados existentes
-                df_atualizado = pd.concat([df, novo_dado], ignore_index=True)
+                # Concatenar com dados antigos (removendo linhas totalmente vazias)
+                df_limpo = df.dropna(how='all')
+                df_atualizado = pd.concat([df_limpo, nova_linha], ignore_index=True)
                 
-                # Atualizar a planilha (A aba precisa estar como EDITOR para todos com link)
-                conn.update(spreadsheet=URL_PLANILHA, worksheet="Garantias", data=df_atualizado)
-                
-                st.success("✅ Registro salvo com sucesso na nuvem!")
-                st.rerun()
+                # Atualizar Planilha
+                try:
+                    conn.update(spreadsheet=URL_PLANILHA, worksheet="Garantias", data=df_atualizado)
+                    st.success("✅ Salvo com sucesso no Google Sheets!")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Erro ao salvar: {e}. Verifique se a planilha está como EDITOR.")
             else:
                 st.error("Campos NF e Item são obrigatórios.")
 
-# --- FILTROS E HISTÓRICO ---
+# --- VISUALIZAÇÃO E FILTROS ---
 st.divider()
 
 if df is not None and not df.empty:
-    # Garantir que a coluna de vencimento é data para o cálculo de status
+    # Tratamento de datas para exibição e cálculo
     df['data_vencimento'] = pd.to_datetime(df['data_vencimento'], errors='coerce')
     hoje = pd.to_datetime(date.today())
 
@@ -80,28 +88,40 @@ if df is not None and not df.empty:
     
     df['Status'] = df['data_vencimento'].apply(definir_status)
 
-    # Filtro de busca
-    busca = st.text_input("🔍 Buscar por NF, Item ou Fornecedor").lower()
+    # Filtros de interface
+    col_busca, col_status = st.columns([2, 1])
+    busca = col_busca.text_input("🔍 Buscar por NF, Item ou Fornecedor").lower()
     
-    # Lógica de filtragem
+    status_opcoes = ["✅ ATIVA", "⚠️ VENCE EM BREVE", "❌ EXPIRADA"]
+    status_selecionados = col_status.multiselect("Filtrar Status", options=status_opcoes, default=status_opcoes)
+
+    # Aplicar filtros no DataFrame
     mask = (
-        df['NF'].astype(str).str.lower().str.contains(busca) | 
-        df['Item'].astype(str).str.lower().str.contains(busca) | 
-        df['Fornecedor'].astype(str).str.lower().str.contains(busca)
+        (df['NF'].astype(str).str.lower().str.contains(busca) | 
+         df['Item'].astype(str).str.lower().str.contains(busca) | 
+         df['Fornecedor'].astype(str).str.lower().str.contains(busca)) &
+        (df['Status'].isin(status_selecionados))
     )
     
-    df_filtrado = df[mask]
+    df_final = df[mask]
 
     # Estilização
-    def colorir(val):
-        color = 'red' if '❌' in val else ('orange' if '⚠️' in val else 'green')
-        return f'color: {color}; font-weight: bold'
+    def style_status(val):
+        if '❌' in str(val): return 'color: #ff4b4b; font-weight: bold'
+        if '⚠️' in str(val): return 'color: #ffa500; font-weight: bold'
+        if '✅' in str(val): return 'color: #008000; font-weight: bold'
+        return ''
 
     st.dataframe(
-        df_filtrado.style.map(colorir, subset=['Status']),
-        use_container_width=True
+        df_final.style.map(style_status, subset=['Status']),
+        use_container_width=True,
+        column_config={
+            "data_compra": "Data Compra",
+            "data_vencimento": st.column_config.DateColumn("Vencimento"),
+            "meses_garantia": "Garantia (Meses)"
+        }
     )
     
-    st.caption(f"Total de registros na planilha: {len(df)}")
+    st.caption(f"Mostrando {len(df_final)} de {len(df)} registros.")
 else:
-    st.info("A planilha está vazia ou ainda não foi conectada.")
+    st.info("A planilha está vazia ou não foi detectada. Verifique os nomes das colunas e da aba.")
