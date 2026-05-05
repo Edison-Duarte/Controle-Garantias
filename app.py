@@ -12,10 +12,8 @@ def carregar_dados():
     if os.path.exists('garantias.csv'):
         try:
             df = pd.read_csv('garantias.csv')
-            # Tratamento de erro na conversão de datas (evita o ValueError)
             df['data_compra'] = pd.to_datetime(df['data_compra'], errors='coerce')
             df['data_vencimento'] = pd.to_datetime(df['data_vencimento'], errors='coerce')
-            # Remove linhas que ficaram com data inválida
             df = df.dropna(subset=['data_compra', 'data_vencimento'])
             return df
         except Exception:
@@ -27,7 +25,7 @@ df = carregar_dados()
 
 # Interface do Usuário
 st.title("🛡️ Gestão de Garantias")
-st.markdown("Controle de trocas de lâmpadas e refletores para evitar compras desnecessárias.")
+st.markdown("Controle de trocas de lâmpadas e refletores.")
 
 # --- FORMULÁRIO DE CADASTRO ---
 with st.expander("📝 Cadastrar Nova Garantia"):
@@ -42,7 +40,6 @@ with st.expander("📝 Cadastrar Nova Garantia"):
         garantia_meses = c5.number_input("Meses de Garantia", min_value=1, value=12)
         
         if st.form_submit_button("Salvar Registro"):
-            # Cálculo automático da data de vencimento
             data_vencimento = pd.to_datetime(data_compra) + pd.DateOffset(months=garantia_meses)
             
             nova_linha = pd.DataFrame([{
@@ -59,17 +56,13 @@ with st.expander("📝 Cadastrar Nova Garantia"):
             st.success("✅ Garantia salva com sucesso!")
             st.rerun()
 
-# --- BUSCA E VISUALIZAÇÃO ---
+# --- BUSCA E FILTROS ---
 st.divider()
-st.subheader("🔍 Pesquisar Garantias")
+st.subheader("🔍 Pesquisar e Filtrar")
 
 if not df.empty:
-    # Campo de busca única para múltiplos critérios
-    termo = st.text_input("Busque por Nota Fiscal, Nome do Item ou Fornecedor").strip().lower()
-
-    # Atualização de Status em tempo real
+    # Atualização de Status em tempo real (essencial para o filtro funcionar)
     hoje = pd.to_datetime(date.today())
-    
     def definir_status(dt_venc):
         diferenca = (dt_venc - hoje).days
         if diferenca < 0:
@@ -81,36 +74,45 @@ if not df.empty:
 
     df['Status'] = df['data_vencimento'].apply(definir_status)
 
-    # Lógica do Filtro
-    if termo:
-        mask = (
-            df['NF'].astype(str).str.lower().str.contains(termo) |
-            df['Item'].str.lower().str.contains(termo) |
-            df['Fornecedor'].str.lower().str.contains(termo)
-        )
-        df_exibicao = df[mask]
-    else:
-        df_exibicao = df
+    # Layout de filtros
+    col_busca, col_filtro = st.columns([2, 1])
+    
+    with col_busca:
+        termo = st.text_input("Busque por NF, Item ou Fornecedor").strip().lower()
+    
+    with col_filtro:
+        opcoes_status = ["✅ ATIVA", "⚠️ VENCE EM BREVE", "❌ EXPIRADA"]
+        status_selecionados = st.multiselect("Filtrar por Status", options=opcoes_status, default=opcoes_status)
+
+    # Lógica combinada de Filtro (Busca de texto + Status)
+    mask_texto = (
+        df['NF'].astype(str).str.lower().str.contains(termo) |
+        df['Item'].str.lower().str.contains(termo) |
+        df['Fornecedor'].str.lower().str.contains(termo)
+    )
+    
+    mask_status = df['Status'].isin(status_selecionados)
+    
+    df_exibicao = df[mask_texto & mask_status]
 
     # Estilização da Tabela
     def colorir_status(val):
-        if val == "❌ EXPIRADA": color = '#FF4B4B' # Vermelho
-        elif val == "⚠️ VENCE EM BREVE": color = '#FFA500' # Laranja
-        else: color = '#008000' # Verde
+        if val == "❌ EXPIRADA": color = '#FF4B4B'
+        elif val == "⚠️ VENCE EM BREVE": color = '#FFA500'
+        else: color = '#008000'
         return f'color: {color}; font-weight: bold'
 
-    # Exibição da tabela com correção do .map()
     st.dataframe(
         df_exibicao.style.map(colorir_status, subset=['Status']),
         use_container_width=True,
         column_config={
             "data_compra": st.column_config.DateColumn("Compra"),
-            "data_vencimento": st.column_config.DateColumn("Vencimento da Garantia"),
+            "data_vencimento": st.column_config.DateColumn("Vencimento"),
             "meses_garantia": "Meses"
         }
     )
     
-    st.caption(f"Exibindo {len(df_exibicao)} registros.")
+    st.caption(f"Mostrando {len(df_exibicao)} registros de um total de {len(df)}.")
 
 else:
-    st.info("O banco de dados está vazio. Cadastre o primeiro item acima.")
+    st.info("O banco de dados está vazio. Cadastre um item para começar.")
