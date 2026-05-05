@@ -70,7 +70,7 @@ if not df.empty:
         color = 'red' if 'EXPIRADA' in val else ('orange' if 'BREVE' in val else 'green')
         return f'color: {color}; font-weight: bold'
 
-    st.dataframe(df_filtrado.style.applymap(colorir_status, subset=['Status']), use_container_width=True)
+    st.dataframe(df_filtrado.style.map(colorir_status, subset=['Status']), use_container_width=True)
 
     # Resumo estatístico
     c1, c2 = st.columns(2)
