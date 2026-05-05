@@ -17,15 +17,15 @@ def carregar_dados():
         df = conn.read(spreadsheet=url_planilha, worksheet="Garantias", ttl=0)
         
         if df is not None and not df.empty:
-            # Remove linhas fantasmamente vazias que o Sheets às vezes gera
+            # Remove linhas fantasmamente vazias
             df = df.dropna(how='all')
             
-            # Formatação de números (Removendo o .0)
+            # Ajuste de números para inteiros (remove o .0)
             for col in ['NF', 'meses_garantia']:
                 if col in df.columns:
                     df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0).astype(int)
             
-            # Conversão de datas para processamento interno
+            # TRATAMENTO DE DATAS: Converte para datetime e remove horas/fuso
             df['data_compra'] = pd.to_datetime(df['data_compra'], errors='coerce')
             df['data_vencimento'] = pd.to_datetime(df['data_vencimento'], errors='coerce')
             
@@ -45,14 +45,17 @@ with st.expander("📝 Cadastrar Nova Garantia"):
         fornecedor = c3.text_input("Fornecedor")
         
         c4, c5 = st.columns(2)
-        data_compra_input = c4.date_input("Data da Compra", value=date.today(), format="DD/MM/YYYY")
+        # Widget com formato brasileiro
+        data_compra_widget = c4.date_input("Data da Compra", value=date.today(), format="DD/MM/YYYY")
         garantia_meses = c5.number_input("Meses de Garantia", min_value=1, value=12, step=1)
         
         if st.form_submit_button("Salvar Permanentemente"):
             if item and nf_input:
-                dt_compra = pd.to_datetime(data_compra_input)
+                # Cálculos de data
+                dt_compra = pd.to_datetime(data_compra_widget)
                 dt_vencimento = dt_compra + pd.DateOffset(months=int(garantia_meses))
                 
+                # Nova linha com strings limpas para o Google Sheets
                 nova_linha = pd.DataFrame([{
                     "NF": int(nf_input),
                     "Item": item,
@@ -62,6 +65,7 @@ with st.expander("📝 Cadastrar Nova Garantia"):
                     "data_vencimento": dt_vencimento.strftime('%Y-%m-%d')
                 }])
                 
+                # Garante que as colunas do df atual sejam compatíveis antes de concatenar
                 df_atualizado = pd.concat([df, nova_linha], ignore_index=True)
                 
                 try:
@@ -102,7 +106,7 @@ if not df.empty:
         (df['Status'].isin(status_selecionados))
     )
     
-    df_final = df[mask]
+    df_final = df[mask].copy()
 
     def style_status(val):
         if '❌' in str(val): return 'background-color: #ffebee; color: #b71c1c; font-weight: bold'
@@ -110,7 +114,7 @@ if not df.empty:
         if '✅' in str(val): return 'background-color: #e8f5e9; color: #1b5e20; font-weight: bold'
         return ''
 
-    # CORREÇÃO DO ERRO: Usando .map em vez de .applymap
+    # Exibição Final
     st.dataframe(
         df_final.style.map(style_status, subset=['Status']),
         use_container_width=True,
