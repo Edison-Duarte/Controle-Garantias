@@ -1,100 +1,94 @@
 import streamlit as st
+from streamlit_gsheets import GSheetsConnection
 import pandas as pd
 from datetime import datetime, date
 
-# 1. CONFIGURAÇÃO DA PÁGINA
 st.set_page_config(page_title="Controle de Garantias", layout="wide")
 
-# 2. INICIALIZAÇÃO DA MEMÓRIA (O segredo para o histórico não sumir)
-if 'historico_garantias' not in st.session_state:
-    st.session_state.historico_garantias = pd.DataFrame(
-        columns=['NF', 'Item', 'Fornecedor', 'data_compra', 'meses_garantia', 'data_vencimento', 'Status']
-    )
+st.title("🛡️ Gestão de Garantias (Google Sheets)")
 
-st.title("🛡️ Gestão de Garantias")
+# --- CONFIGURAÇÃO DA CONEXÃO ---
+# Substitua pelo link que você copiou no Passo 1
+URL_PLANILHA = "COLE_AQUI_O_LINK_DA_SUA_PLANILHA"
 
-# 3. FORMULÁRIO DE CADASTRO
-with st.expander("📝 Cadastrar Nova Garantia", expanded=True):
-    with st.form("cadastro_form", clear_on_submit=True):
+conn = st.connection("gsheets", type=GSheetsConnection)
+
+# Função para carregar dados da planilha
+def carregar_dados():
+    return conn.read(spreadsheet=URL_PLANILHA, worksheet="garantias")
+
+df = carregar_dados()
+
+# --- FORMULÁRIO DE CADASTRO ---
+with st.expander("📝 Cadastrar Nova Garantia"):
+    with st.form("form_cadastro", clear_on_submit=True):
         c1, c2, c3 = st.columns(3)
         nf = c1.text_input("Número da NF")
-        item = c2.text_input("Descrição (Ex: Refletor LED)")
+        item = c2.text_input("Descrição do Item")
         fornecedor = c3.text_input("Fornecedor")
         
         c4, c5 = st.columns(2)
         data_compra = c4.date_input("Data da Compra", value=date.today())
         garantia_meses = c5.number_input("Meses de Garantia", min_value=1, value=12)
         
-        submit = st.form_submit_button("Salvar no Histórico")
-        
-        if submit:
-            if nf and item:
+        if st.form_submit_button("Salvar Permanentemente"):
+            if item and nf:
                 # Cálculo da data de vencimento
-                dt_compra_dt = pd.to_datetime(data_compra)
-                dt_vencimento = dt_compra_dt + pd.DateOffset(months=garantia_meses)
+                data_vencimento = pd.to_datetime(data_compra) + pd.DateOffset(months=garantia_meses)
                 
-                # Cálculo do Status
-                hoje = pd.to_datetime(date.today())
-                diferenca = (dt_vencimento - hoje).days
-                if diferenca < 0: status = "❌ EXPIRADA"
-                elif diferenca <= 30: status = "⚠️ VENCE EM BREVE"
-                else: status = "✅ ATIVA"
-
-                # Criar nova linha
-                nova_garantia = pd.DataFrame([{
-                    'NF': nf,
-                    'Item': item,
-                    'Fornecedor': fornecedor,
-                    'data_compra': data_compra,
-                    'meses_garantia': garantia_meses,
-                    'data_vencimento': dt_vencimento.date(),
-                    'Status': status
+                # Novo dado formatado
+                novo_dado = pd.DataFrame([{
+                    "NF": str(nf),
+                    "Item": item,
+                    "Fornecedor": fornecedor,
+                    "data_compra": data_compra.strftime('%Y-%m-%d'),
+                    "meses_garantia": int(garantia_meses),
+                    "data_vencimento": data_vencimento.strftime('%Y-%m-%d')
                 }])
                 
-                # ADICIONAR AO HISTÓRICO NA MEMÓRIA
-                st.session_state.historico_garantias = pd.concat(
-                    [st.session_state.historico_garantias, nova_garantia], 
-                    ignore_index=True
-                )
-                st.success(f"Item '{item}' adicionado ao histórico!")
+                # Junta com os dados existentes e atualiza a planilha
+                df_atualizado = pd.concat([df, novo_dado], ignore_index=True)
+                conn.update(spreadsheet=URL_PLANILHA, worksheet="garantias", data=df_atualizado)
+                
+                st.success("✅ Salvo no Google Sheets!")
+                st.rerun()
             else:
-                st.error("Por favor, preencha a NF e o Nome do Item.")
+                st.error("Preencha os campos obrigatórios (NF e Item).")
 
-# 4. EXIBIÇÃO DO HISTÓRICO E BUSCA
+# --- FILTROS E HISTÓRICO ---
 st.divider()
-st.subheader("🔍 Histórico de Garantias")
-
-df_exibir = st.session_state.historico_garantias
-
-if not df_exibir.empty:
-    # Barra de busca
-    busca = st.text_input("Pesquisar por NF, Item ou Fornecedor").strip().lower()
+if not df.empty:
+    # Lógica de Status
+    hoje = pd.to_datetime(date.today())
+    df['data_vencimento'] = pd.to_datetime(df['data_vencimento'])
     
-    if busca:
-        mask = (
-            df_exibir['NF'].astype(str).str.lower().contains(busca) |
-            df_exibir['Item'].str.lower().contains(busca) |
-            df_exibir['Fornecedor'].str.lower().contains(busca)
-        )
-        df_exibir = df_exibir[mask]
+    def definir_status(dt):
+        diff = (dt - hoje).days
+        if diff < 0: return "❌ EXPIRADA"
+        elif diff <= 30: return "⚠️ VENCE EM BREVE"
+        else: return "✅ ATIVA"
+    
+    df['Status'] = df['data_vencimento'].apply(definir_status)
 
-    # Estilização
-    def style_status(val):
-        color = 'red' if '❌' in val else ('orange' if '⚠️' in val else 'green')
-        return f'color: {color}; font-weight: bold'
+    # Filtros
+    c_busca, c_status = st.columns([2, 1])
+    busca = c_busca.text_input("🔍 Buscar por NF, Item ou Fornecedor").lower()
+    status_filtro = c_status.multiselect("Status", 
+                                       options=["✅ ATIVA", "⚠️ VENCE EM BREVE", "❌ EXPIRADA"],
+                                       default=["✅ ATIVA", "⚠️ VENCE EM BREVE"])
 
+    # Aplicar filtros
+    mask = (
+        (df['NF'].astype(str).str.lower().str.contains(busca) | 
+         df['Item'].str.lower().str.contains(busca) | 
+         df['Fornecedor'].str.lower().str.contains(busca)) & 
+        (df['Status'].isin(status_filtro))
+    )
+    
+    # Exibição estilizada
     st.dataframe(
-        df_exibir.style.map(style_status, subset=['Status']),
+        df[mask].style.map(lambda x: 'color: red; font-weight: bold' if x == "❌ EXPIRADA" else '', subset=['Status']),
         use_container_width=True
     )
-    
-    # Botão para baixar o que foi cadastrado (Já que a memória limpa ao fechar)
-    csv = df_exibir.to_csv(index=False).encode('utf-8')
-    st.download_button(
-        label="📥 Baixar Histórico em CSV",
-        data=csv,
-        file_name='garantias_cadastradas.csv',
-        mime='text/csv',
-    )
 else:
-    st.info("Nenhum item cadastrado nesta sessão.")
+    st.info("Nenhum registro encontrado na planilha.")
