@@ -1,0 +1,82 @@
+import streamlit as st
+import pandas as pd
+from datetime import datetime, date
+import os
+
+# Configuração da página
+st.set_page_config(page_title="Controle de Garantias", layout="wide")
+
+# Função para carregar ou criar o banco de dados local (CSV)
+def carregar_dados():
+    if os.path.exists('garantias.csv'):
+        df = pd.read_csv('garantias.csv', parse_dates=['data_compra', 'data_vencimento'])
+        return df
+    else:
+        return pd.DataFrame(columns=['NF', 'Item', 'Fornecedor', 'data_compra', 'meses_garantia', 'data_vencimento', 'Status'])
+
+df = carregar_dados()
+
+st.title("🛡️ Gestão de Garantias de Equipamentos")
+st.markdown("Controle de lâmpadas, refletores e materiais para evitar compras desnecessárias.")
+
+# --- FORMULÁRIO DE ENTRADA ---
+with st.expander("Cadastrar Nova Nota Fiscal / Item"):
+    with st.form("cadastro_form"):
+        col1, col2, col3 = st.columns(3)
+        nf = col1.text_input("Número da NF")
+        item = col2.text_input("Descrição do Item (Ex: Refletor LED 50W)")
+        fornecedor = col3.text_input("Fornecedor")
+        
+        col4, col5 = st.columns(2)
+        data_compra = col4.date_input("Data da Compra", value=date.today())
+        garantia_meses = col5.number_input("Meses de Garantia", min_value=1, value=12)
+        
+        submit = st.form_submit_button("Salvar Garantia")
+        
+        if submit:
+            # Cálculo da data de vencimento
+            data_vencimento = pd.to_datetime(data_compra) + pd.DateOffset(months=garantia_meses)
+            
+            nova_linha = {
+                'NF': nf,
+                'Item': item,
+                'Fornecedor': fornecedor,
+                'data_compra': data_compra,
+                'meses_garantia': garantia_meses,
+                'data_vencimento': data_vencimento,
+                'Status': 'Ativa'
+            }
+            
+            df = pd.concat([df, pd.DataFrame([nova_linha])], ignore_index=True)
+            df.to_csv('garantias.csv', index=False)
+            st.success(f"Garantia de {item} cadastrada com sucesso!")
+            st.rerun()
+
+# --- DASHBOARD E FILTROS ---
+if not df.empty:
+    # Lógica de Status em tempo real
+    hoje = pd.to_datetime(date.today())
+    df['Status'] = df['data_vencimento'].apply(lambda x: "⚠️ VENCE EM BREVE" if (x - hoje).days <= 30 and (x - hoje).days > 0 
+                                              else ("✅ ATIVA" if x > hoje else "❌ EXPIRADA"))
+
+    st.subheader("Itens sob Monitoramento")
+    
+    # Filtros rápidos
+    status_filter = st.multiselect("Filtrar por Status", options=df['Status'].unique(), default=df['Status'].unique())
+    df_filtrado = df[df['Status'].isin(status_filter)]
+
+    # Exibição da Tabela com Cores
+    def colorir_status(val):
+        color = 'red' if 'EXPIRADA' in val else ('orange' if 'BREVE' in val else 'green')
+        return f'color: {color}; font-weight: bold'
+
+    st.dataframe(df_filtrado.style.applymap(colorir_status, subset=['Status']), use_container_width=True)
+
+    # Resumo estatístico
+    c1, c2 = st.columns(2)
+    ativas = len(df[df['Status'] != "❌ EXPIRADA"])
+    c1.metric("Garantias Ativas/Em Alerta", ativas)
+    c2.metric("Itens fora de Garantia", len(df) - ativas)
+
+else:
+    st.info("Nenhum item cadastrado ainda. Use o formulário acima para começar.")
