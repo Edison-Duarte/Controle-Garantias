@@ -17,27 +17,27 @@ def carregar_dados():
         df = conn.read(spreadsheet=url_planilha, worksheet="Garantias", ttl=0)
         
         if df is not None and not df.empty:
-            # Limpa linhas totalmente vazias que as vezes ficam no Sheets
+            # Remove linhas fantasmamente vazias que o Sheets às vezes gera
             df = df.dropna(how='all')
             
-            # Ajuste 1: NF e meses_garantia como INTEIROS (sem .0)
+            # Formatação de números (Removendo o .0)
             for col in ['NF', 'meses_garantia']:
                 if col in df.columns:
                     df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0).astype(int)
             
-            # Ajuste 2: Tratar datas (forçando formato datetime para cálculo)
+            # Conversão de datas para processamento interno
             df['data_compra'] = pd.to_datetime(df['data_compra'], errors='coerce')
             df['data_vencimento'] = pd.to_datetime(df['data_vencimento'], errors='coerce')
             
         return df
     except Exception as e:
-        st.error(f"Erro ao carregar: {e}")
+        st.error(f"Erro ao carregar dados: {e}")
         return pd.DataFrame(columns=['NF', 'Item', 'Fornecedor', 'data_compra', 'meses_garantia', 'data_vencimento'])
 
 df = carregar_dados()
 
 # --- FORMULÁRIO DE CADASTRO ---
-with st.expander("📝 Cadastrar Nova Garantia", expanded=False):
+with st.expander("📝 Cadastrar Nova Garantia"):
     with st.form("form_cadastro", clear_on_submit=True):
         c1, c2, c3 = st.columns(3)
         nf_input = c1.text_input("Número da NF")
@@ -80,7 +80,6 @@ st.divider()
 if not df.empty:
     hoje = pd.to_datetime(date.today())
 
-    # Função de status robusta para lidar com datas vazias (Nat)
     def definir_status(dt):
         if pd.isnull(dt): return "⚪ SEM DATA"
         diff = (dt - hoje).days
@@ -96,7 +95,6 @@ if not df.empty:
     status_opcoes = ["✅ ATIVA", "⚠️ VENCE EM BREVE", "❌ EXPIRADA", "⚪ SEM DATA"]
     status_selecionados = col_status.multiselect("Filtrar Status", options=status_opcoes, default=status_opcoes)
 
-    # Filtro que aceita valores nulos sem quebrar
     mask = (
         (df['NF'].astype(str).str.contains(busca, case=False) | 
          df['Item'].astype(str).str.contains(busca, case=False) | 
@@ -112,8 +110,9 @@ if not df.empty:
         if '✅' in str(val): return 'background-color: #e8f5e9; color: #1b5e20; font-weight: bold'
         return ''
 
+    # CORREÇÃO DO ERRO: Usando .map em vez de .applymap
     st.dataframe(
-        df_final.style.applymap(style_status, subset=['Status']),
+        df_final.style.map(style_status, subset=['Status']),
         use_container_width=True,
         hide_index=True,
         column_config={
@@ -126,4 +125,4 @@ if not df.empty:
     )
     st.caption(f"Mostrando {len(df_final)} registros.")
 else:
-    st.info("Nenhum registro encontrado na planilha.")
+    st.info("Nenhum registro encontrado.")
