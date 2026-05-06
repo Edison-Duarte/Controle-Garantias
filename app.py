@@ -6,7 +6,7 @@ from datetime import date
 # 1. Configuração da página
 st.set_page_config(page_title="Controle de Garantias", layout="wide")
 
-st.title("🛡️ Gestão de Garantias (Google Sheets)")
+st.title("🛡️ Gestão de Garantias")
 
 # 2. Conexão com Google Sheets
 conn = st.connection("gsheets", type=GSheetsConnection)
