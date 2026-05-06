@@ -6,112 +6,121 @@ from datetime import date
 # 1. Configuração da página
 st.set_page_config(page_title="Controle de Garantias", layout="wide")
 
-st.title("🛡️ Gestão de NF/Garantias")
+st.title("🛡️ Gestão de Garantias (Itens por NF)")
 
 # 2. Conexão com Google Sheets
 conn = st.connection("gsheets", type=GSheetsConnection)
 
 def carregar_dados():
     try:
-        # Busca a URL diretamente dos secrets
         url_planilha = st.secrets["connections"]["gsheets"]["spreadsheet"]
         df = conn.read(spreadsheet=url_planilha, worksheet="Garantias", ttl=0)
-        
         if df is not None and not df.empty:
-            # Remove linhas totalmente vazias
             df = df.dropna(how='all')
-            
-            # Ajuste de NF e meses para números inteiros (remove o .0)
             for col in ['NF', 'meses_garantia']:
                 if col in df.columns:
                     df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0).astype(int)
-            
-            # TRATAMENTO DE DATAS: Remove o "00:00:00" e converte para formato de data puro
             for col in ['data_compra', 'data_vencimento']:
                 if col in df.columns:
                     df[col] = pd.to_datetime(df[col], errors='coerce').dt.date
-            
         return df
     except Exception as e:
-        st.error(f"Erro ao carregar dados: {e}")
         return pd.DataFrame(columns=['NF', 'Item', 'Fornecedor', 'data_compra', 'meses_garantia', 'data_vencimento'])
 
-df = carregar_dados()
+df_existente = carregar_dados()
+
+# --- ESTADO DA SESSÃO PARA MÚLTIPLOS ITENS ---
+if 'lista_itens' not in st.session_state:
+    st.session_state.lista_itens = []
 
 # --- FORMULÁRIO DE CADASTRO ---
-with st.expander("📝 Cadastrar Nova NF"):
-    with st.form("form_cadastro", clear_on_submit=True):
-        c1, c2, c3 = st.columns(3)
-        nf_input = c1.text_input("Número da NF")
-        item = c2.text_input("Descrição do Item")
-        fornecedor = c3.text_input("Fornecedor")
+with st.expander("📝 Cadastrar NF com Múltiplos Itens", expanded=True):
+    # Cabeçalho da NF (Comum para todos os itens)
+    c1, c2, c3 = st.columns([1, 1, 2])
+    nf_comum = c1.text_input("Número da NF")
+    data_comum = c2.date_input("Data da Compra", value=date.today(), format="DD/MM/YYYY")
+    fornecedor_comum = c3.text_input("Fornecedor")
+
+    st.divider()
+    st.subheader("Itens da Nota")
+    
+    # Linha para adicionar novo item à lista temporária
+    ca, cb, cc = st.columns([2, 1, 1])
+    item_nome = ca.text_input("Descrição do Item (ex: Lâmpada)")
+    item_garantia = cb.number_input("Garantia (Meses)", min_value=1, value=12)
+    
+    if st.button("➕ Adicionar Item à Lista"):
+        if item_nome and nf_comum:
+            # Calcula vencimento individual do item
+            dt_venc = pd.to_datetime(data_comum) + pd.DateOffset(months=int(item_garantia))
+            
+            # Adiciona à lista na memória
+            st.session_state.lista_itens.append({
+                "NF": nf_comum,
+                "Item": item_nome,
+                "Fornecedor": fornecedor_comum,
+                "data_compra": data_comum.strftime('%Y-%m-%d'),
+                "meses_garantia": int(item_garantia),
+                "data_vencimento": dt_venc.strftime('%Y-%m-%d')
+            })
+            st.toast(f"Item '{item_nome}' adicionado!")
+        else:
+            st.error("Preencha a NF e o Nome do Item antes de adicionar.")
+
+    # Exibe tabela temporária do que será salvo
+    if st.session_state.lista_itens:
+        st.write("---")
+        st.write("**Itens prontos para salvar:**")
+        df_temp = pd.DataFrame(st.session_state.lista_itens)
+        st.table(df_temp[['Item', 'meses_garantia']])
         
-        c4, c5 = st.columns(2)
-        # Input de data padrão Brasil
-        data_compra_widget = c4.date_input("Data da Compra", value=date.today(), format="DD/MM/YYYY")
-        garantia_meses = c5.number_input("Meses de Garantia", min_value=1, value=12, step=1)
+        col_btn1, col_btn2 = st.columns(2)
         
-        if st.form_submit_button("Salvar Permanentemente"):
-            if item and nf_input:
-                # Cálculos de data
-                dt_compra = pd.to_datetime(data_compra_widget)
-                dt_vencimento = dt_compra + pd.DateOffset(months=int(garantia_meses))
+        if col_btn1.button("🗑️ Limpar Lista"):
+            st.session_state.lista_itens = []
+            st.rerun()
+
+        if col_btn2.button("💾 SALVAR TUDO NO GOOGLE SHEETS", type="primary"):
+            try:
+                # Junta o novo lote com o que já existe na planilha
+                df_novos = pd.DataFrame(st.session_state.lista_itens)
+                df_final = pd.concat([df_existente, df_novos], ignore_index=True)
                 
-                # Prepara a nova linha para envio (formato ISO para o Google Sheets entender)
-                nova_linha = pd.DataFrame([{
-                    "NF": int(nf_input),
-                    "Item": item,
-                    "Fornecedor": fornecedor,
-                    "data_compra": dt_compra.strftime('%Y-%m-%d'),
-                    "meses_garantia": int(garantia_meses),
-                    "data_vencimento": dt_vencimento.strftime('%Y-%m-%d')
-                }])
+                url_planilha = st.secrets["connections"]["gsheets"]["spreadsheet"]
+                conn.update(spreadsheet=url_planilha, worksheet="Garantias", data=df_final)
                 
-                # Concatena com os dados existentes
-                df_atualizado = pd.concat([df, nova_linha], ignore_index=True)
-                
-                try:
-                    url_planilha = st.secrets["connections"]["gsheets"]["spreadsheet"]
-                    conn.update(spreadsheet=url_planilha, worksheet="Garantias", data=df_atualizado)
-                    st.success("✅ Registro salvo com sucesso!")
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"Erro ao salvar na planilha: {e}")
-            else:
-                st.error("Por favor, preencha a NF e a Descrição do Item.")
+                st.success(f"✅ {len(df_novos)} itens salvos com sucesso!")
+                st.session_state.lista_itens = [] # Limpa a lista após salvar
+                st.rerun()
+            except Exception as e:
+                st.error(f"Erro ao salvar: {e}")
 
 # --- VISUALIZAÇÃO E HISTÓRICO ---
 st.divider()
+df = carregar_dados() # Recarrega para mostrar o que acabou de ser salvo
 
 if not df.empty:
     hoje = date.today()
 
-    # Função para definir o status visual baseado na data de vencimento
     def definir_status(dt):
-        if pd.isnull(dt) or dt is None: 
-            return "⚪ SEM DATA"
+        if pd.isnull(dt) or dt is None: return "⚪ SEM DATA"
         try:
-            # Garante comparação entre objetos date
-            if isinstance(dt, pd.Timestamp):
-                dt = dt.date()
-            
+            if isinstance(dt, pd.Timestamp): dt = dt.date()
             diff = (dt - hoje).days
             if diff < 0: return "❌ EXPIRADA"
-            elif diff <= 30: return "⚠️ VENCE EM BREVE"
+            elif diff <= 30: return "⚠️ VENCE"
             else: return "✅ ATIVA"
-        except:
-            return "⚪ SEM DATA"
+        except: return "⚪ SEM DATA"
     
     df['Status'] = df['data_vencimento'].apply(definir_status)
 
-    # Filtros de busca e status
-    col_busca, col_status = st.columns([2, 1])
-    busca = col_busca.text_input("🔍 Buscar por NF, Item ou Fornecedor").lower()
-    
-    status_opcoes = ["✅ ATIVA", "⚠️ VENCE EM BREVE", "❌ EXPIRADA", "⚪ SEM DATA"]
-    status_selecionados = col_status.multiselect("Filtrar por Status", options=status_opcoes, default=status_opcoes)
+    # Filtros
+    c_busca, c_status = st.columns([2, 1])
+    busca = c_busca.text_input("🔍 Buscar (NF, Item ou Fornecedor)").lower()
+    status_selecionados = c_status.multiselect("Status", 
+                                             options=["✅ ATIVA", "⚠️ VENCE", "❌ EXPIRADA", "⚪ SEM DATA"], 
+                                             default=["✅ ATIVA", "⚠️ VENCE", "❌ EXPIRADA", "⚪ SEM DATA"])
 
-    # Lógica de filtragem
     mask = (
         (df['NF'].astype(str).str.contains(busca, case=False) | 
          df['Item'].astype(str).str.contains(busca, case=False) | 
@@ -119,28 +128,12 @@ if not df.empty:
         (df['Status'].isin(status_selecionados))
     )
     
-    df_final = df[mask].copy()
-
-    # Estilização das células de status
-    def style_status(val):
-        if '❌' in str(val): return 'background-color: #ffebee; color: #b71c1c; font-weight: bold'
-        if '⚠️' in str(val): return 'background-color: #fff3e0; color: #e65100; font-weight: bold'
-        if '✅' in str(val): return 'background-color: #e8f5e9; color: #1b5e20; font-weight: bold'
-        return ''
-
-    # Exibição da Tabela de Histórico
     st.dataframe(
-        df_final.style.map(style_status, subset=['Status']),
+        df[mask],
         use_container_width=True,
         hide_index=True,
         column_config={
-            "NF": st.column_config.TextColumn("NF"),
-            "data_compra": st.column_config.DateColumn("Data Compra", format="DD/MM/YYYY"),
+            "data_compra": st.column_config.DateColumn("Compra", format="DD/MM/YYYY"),
             "data_vencimento": st.column_config.DateColumn("Vencimento", format="DD/MM/YYYY"),
-            "meses_garantia": st.column_config.NumberColumn("Garantia (Meses)", format="%d"),
-            "Status": "Status da Garantia"
         }
     )
-    st.caption(f"Exibindo {len(df_final)} registros encontrados.")
-else:
-    st.info("A planilha está vazia ou ainda não foi carregada.")
