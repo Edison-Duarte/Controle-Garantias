@@ -6,7 +6,7 @@ from datetime import date
 # 1. Configuração da página
 st.set_page_config(page_title="Controle de Garantias", layout="wide")
 
-st.title("🛡️ Gestão de Garantias")
+st.title("🛡️ Gestão de NF/Garantias")
 
 # 2. Conexão com Google Sheets
 conn = st.connection("gsheets", type=GSheetsConnection)
@@ -39,7 +39,7 @@ def carregar_dados():
 df = carregar_dados()
 
 # --- FORMULÁRIO DE CADASTRO ---
-with st.expander("📝 Cadastrar Nova Garantia"):
+with st.expander("📝 Cadastrar Nova NF"):
     with st.form("form_cadastro", clear_on_submit=True):
         c1, c2, c3 = st.columns(3)
         nf_input = c1.text_input("Número da NF")
