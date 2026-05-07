@@ -151,13 +151,5 @@ if not df.empty:
         }
     )
     st.caption(f"Exibindo {len(df_filtrado)} registros.")
-   # --- 8. RODAPÉ ---
-st.write("---")
-st.markdown("""
-    <div class="footer-container">
-        <div class="idea-marcia">Idea of: Marcia Olsever</div>
-        <div class="footer-label">Developed by:</div>
-        <div class="footer-gabriola">Edison Duarte Filho®</div>
-    </div>
-""", unsafe_allow_html=True)
+   
 
