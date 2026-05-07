@@ -158,7 +158,7 @@ st.markdown("---")
 st.markdown(
     """
     <div style='text-align: center;'>
-        <p style='margin-bottom: 1px; font-family: "Gabriola", serif; font-style: italic; font-size: 18px; color: #0056b3;'>
+        <p style='margin-bottom: -2px; font-family: "Gabriola", serif; font-style: italic; font-size: 18px; color: #0056b3;'>
             Developed by:
         </p>
         <p style='font-family: "Gabriola", serif; font-size: 20px; font-weight: 100; color: #1e7044;'>
