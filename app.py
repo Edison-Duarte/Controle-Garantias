@@ -6,7 +6,7 @@ from datetime import date
 # 1. Configuração da página
 st.set_page_config(page_title="Controle de Garantias", layout="wide")
 
-st.title("🛡️ Gestão de NF e Garantias")
+st.title("🛡️ InvoiceSis - Gestão de NF e Garantias")
 
 # 2. Conexão com Google Sheets
 conn = st.connection("gsheets", type=GSheetsConnection)
@@ -151,3 +151,11 @@ if not df.empty:
         }
     )
     st.caption(f"Exibindo {len(df_filtrado)} registros.")
+    # --- 8. RODAPÉ ---
+st.write("---")
+st.markdown("""
+    <div class="footer-container">
+               <div class="footer-label">Developed by:</div>
+        <div class="footer-gabriola">Edison Duarte Filho®</div>
+    </div>
+""", unsafe_allow_html=True)
