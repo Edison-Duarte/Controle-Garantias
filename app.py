@@ -6,7 +6,7 @@ from datetime import date
 # 1. Configuração da página
 st.set_page_config(page_title="Controle de Garantias", layout="wide")
 
-st.title("🛡️ Gestão de Garantias (Emissão, Compra e Itens)")
+st.title("🛡️ Gestão de Garantias (Baseado na Emissão)")
 
 # 2. Conexão com Google Sheets
 conn = st.connection("gsheets", type=GSheetsConnection)
@@ -22,14 +22,14 @@ def carregar_dados():
                 if col in df.columns:
                     df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0).astype(int)
             
-            # Limpeza de datas (Incluindo Data da Emissão)
-            colunas_data = ['data_emissao', 'data_compra', 'data_vencimento']
+            # Limpeza de datas
+            colunas_data = ['data_emissao', 'data_vencimento']
             for col in colunas_data:
                 if col in df.columns:
                     df[col] = pd.to_datetime(df[col], errors='coerce').dt.date
         return df
     except Exception as e:
-        return pd.DataFrame(columns=['NF', 'data_emissao', 'Item', 'quantidade', 'Fornecedor', 'data_compra', 'meses_garantia', 'data_vencimento'])
+        return pd.DataFrame(columns=['NF', 'data_emissao', 'Item', 'quantidade', 'Fornecedor', 'meses_garantia', 'data_vencimento'])
 
 df_existente = carregar_dados()
 
@@ -38,13 +38,12 @@ if 'lista_itens' not in st.session_state:
     st.session_state.lista_itens = []
 
 # --- FORMULÁRIO DE CADASTRO ---
-with st.expander("📝 Cadastrar NF e Lote de Itens", expanded=False):
-    # Cabeçalho da NF (Campos que se repetem para todos os itens)
-    c1, c2, c3, c4 = st.columns([1, 1, 1, 2])
+with st.expander("📝 Cadastrar NF e Lote de Itens", expanded=True):
+    # Cabeçalho da NF (Campos comuns)
+    c1, c2, c3 = st.columns([1, 1, 2])
     nf_comum = c1.text_input("Número da NF")
     data_emissao_comum = c2.date_input("Data da Emissão", value=date.today(), format="DD/MM/YYYY")
-    data_compra_comum = c3.date_input("Data da Compra", value=date.today(), format="DD/MM/YYYY")
-    fornecedor_comum = c4.text_input("Fornecedor")
+    fornecedor_comum = c3.text_input("Fornecedor")
 
     st.divider()
     
@@ -56,8 +55,9 @@ with st.expander("📝 Cadastrar NF e Lote de Itens", expanded=False):
     
     if st.button("➕ Adicionar à Lista"):
         if item_nome and nf_comum:
-            # Cálculo do vencimento baseado na data da compra
-            dt_venc = pd.to_datetime(data_compra_comum) + pd.DateOffset(months=int(item_garantia))
+            # Cálculo do vencimento baseado na Data da Emissão
+            dt_emissao = pd.to_datetime(data_emissao_comum)
+            dt_venc = dt_emissao + pd.DateOffset(months=int(item_garantia))
             
             st.session_state.lista_itens.append({
                 "NF": nf_comum,
@@ -65,15 +65,14 @@ with st.expander("📝 Cadastrar NF e Lote de Itens", expanded=False):
                 "Item": item_nome,
                 "quantidade": int(item_qtd),
                 "Fornecedor": fornecedor_comum,
-                "data_compra": data_compra_comum.strftime('%Y-%m-%d'),
                 "meses_garantia": int(item_garantia),
                 "data_vencimento": dt_venc.strftime('%Y-%m-%d')
             })
-            st.toast(f"Item '{item_nome}' na lista.")
+            st.toast(f"Item '{item_nome}' adicionado!")
         else:
             st.error("Preencha o número da NF e a Descrição do Item.")
 
-    # Tabela temporária de itens adicionados
+    # Tabela temporária de itens
     if st.session_state.lista_itens:
         st.write("---")
         df_temp = pd.DataFrame(st.session_state.lista_itens)
@@ -84,13 +83,13 @@ with st.expander("📝 Cadastrar NF e Lote de Itens", expanded=False):
             st.session_state.lista_itens = []
             st.rerun()
 
-        if col_btn2.button("💾 SALVAR LOTE NO GOOGLE SHEETS", type="primary"):
+        if col_btn2.button("💾 SALVAR TUDO NO GOOGLE SHEETS", type="primary"):
             try:
                 df_novos = pd.DataFrame(st.session_state.lista_itens)
                 df_final = pd.concat([df_existente, df_novos], ignore_index=True)
                 url_planilha = st.secrets["connections"]["gsheets"]["spreadsheet"]
                 conn.update(spreadsheet=url_planilha, worksheet="Garantias", data=df_final)
-                st.success("✅ Tudo salvo com sucesso!")
+                st.success("✅ Salvo com sucesso!")
                 st.session_state.lista_itens = []
                 st.rerun()
             except Exception as e:
@@ -142,7 +141,6 @@ if not df.empty:
         column_config={
             "NF": st.column_config.TextColumn("NF"),
             "data_emissao": st.column_config.DateColumn("Emissão", format="DD/MM/YYYY"),
-            "data_compra": st.column_config.DateColumn("Compra", format="DD/MM/YYYY"),
             "data_vencimento": st.column_config.DateColumn("Vencimento", format="DD/MM/YYYY"),
             "quantidade": st.column_config.NumberColumn("Qtd", format="%d"),
             "meses_garantia": st.column_config.NumberColumn("Meses", format="%d"),
