@@ -152,17 +152,16 @@ if not df.empty:
     )
     st.caption(f"Exibindo {len(df_filtrado)} registros.")
   
-# --- ASSINATURA FINAL IDENTICA ---
+# --- ASSINATURA FINALIZADA COM FONTE GABRIOLA ---
 st.markdown("---")
 
 st.markdown(
     """
-    <link href="https://fonts.googleapis.com/css2?family=Playball&display=swap" rel="stylesheet">
     <div style='text-align: center;'>
-        <p style='margin-bottom: -20px; font-family: "Playball", cursive; font-size: 20px; color: #0056b3;'>
+        <p style='margin-bottom: -25px; font-family: "Gabriola", serif; font-style: italic; font-size: 26px; color: #0056b3;'>
             Developed by:
         </p>
-        <p style='font-family: "Playball", cursive; font-size: 32px; color: #1e7044; font-weight: bold;'>
+        <p style='font-family: "Gabriola", serif; font-size: 45px; font-weight: 100; color: #1e7044;'>
             Edison Duarte Filho®
         </p>
     </div>
