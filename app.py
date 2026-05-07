@@ -152,16 +152,17 @@ if not df.empty:
     )
     st.caption(f"Exibindo {len(df_filtrado)} registros.")
   
-# --- ASSINATURA AO FINAL DO APP ---
+# --- ASSINATURA FINAL IDENTICA ---
 st.markdown("---")
 
 st.markdown(
     """
+    <link href="https://fonts.googleapis.com/css2?family=Playball&display=swap" rel="stylesheet">
     <div style='text-align: center;'>
-        <p style='margin-bottom: -15px; font-family: "Bodoni MT", "Bodoni", serif; font-style: italic; font-size: 16px; color: #777;'>
+        <p style='margin-bottom: -20px; font-family: "Playball", cursive; font-size: 20px; color: #0056b3;'>
             Developed by:
         </p>
-        <p style='font-family: "Bodoni MT", "Bodoni", serif; font-weight: bold; font-size: 22px; color: #2e7d32;'>
+        <p style='font-family: "Playball", cursive; font-size: 32px; color: #1e7044; font-weight: bold;'>
             Edison Duarte Filho®
         </p>
     </div>
