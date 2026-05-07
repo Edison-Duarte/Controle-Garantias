@@ -157,12 +157,11 @@ st.markdown("---")
 
 st.markdown(
     """
-    <link href="https://fonts.googleapis.com/css2?family=Dancing+Script:wght@700&display=swap" rel="stylesheet">
     <div style='text-align: center;'>
-        <p style='margin-bottom: -10px; font-family: bodoni MT; font-style: italic; font-size: 14px; color: #777;'>
+        <p style='margin-bottom: -15px; font-family: "Bodoni MT", "Bodoni", serif; font-style: italic; font-size: 16px; color: #777;'>
             Developed by:
         </p>
-        <p style='font-family: "Dancing Script", cursive; font-size: 24px; color: #2e7d32;'>
+        <p style='font-family: "Bodoni MT", "Bodoni", serif; font-weight: bold; font-size: 22px; color: #2e7d32;'>
             Edison Duarte Filho®
         </p>
     </div>
