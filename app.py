@@ -158,10 +158,10 @@ st.markdown("---")
 st.markdown(
     """
     <div style='text-align: center;'>
-        <p style='margin-bottom: -25px; font-family: "Gabriola", serif; font-style: italic; font-size: 26px; color: #0056b3;'>
+        <p style='margin-bottom: -25px; font-family: "Gabriola", serif; font-style: italic; font-size: 14px; color: #0056b3;'>
             Developed by:
         </p>
-        <p style='font-family: "Gabriola", serif; font-size: 45px; font-weight: 100; color: #1e7044;'>
+        <p style='font-family: "Gabriola", serif; font-size: 18px; font-weight: 100; color: #1e7044;'>
             Edison Duarte Filho®
         </p>
     </div>
