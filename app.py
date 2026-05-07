@@ -95,7 +95,7 @@ with st.expander("📝 Cadastrar NF e Lote de Itens", expanded=True):
             except Exception as e:
                 st.error(f"Erro ao salvar: {e}")
 
-# --- HISTÓRICO COM FILTROS ---
+# --- HISTÓRICO COM FILTROS (ATUALIZADO) ---
 st.divider()
 df = carregar_dados()
 
@@ -119,6 +119,7 @@ if not df.empty:
     status_opcoes = ["✅ ATIVA", "⚠️ VENCE EM BREVE", "❌ EXPIRADA", "⚪ SEM DATA"]
     status_selecionados = c_status.multiselect("Filtrar por Status", options=status_opcoes, default=status_opcoes)
 
+    # Filtragem
     mask = (
         (df['NF'].astype(str).str.contains(busca, case=False) | 
          df['Item'].astype(str).str.contains(busca, case=False) | 
@@ -126,7 +127,9 @@ if not df.empty:
         (df['Status'].isin(status_selecionados))
     )
     
-    df_filtrado = df[mask]
+    # Selecionamos apenas as colunas que queremos exibir (removendo data_compra)
+    colunas_exibicao = ['NF', 'data_emissao', 'Item', 'quantidade', 'Fornecedor', 'meses_garantia', 'data_vencimento', 'Status']
+    df_filtrado = df.loc[mask, [c for c in colunas_exibicao if c in df.columns]]
 
     def style_status(val):
         if '❌' in str(val): return 'background-color: #ffebee; color: #b71c1c; font-weight: bold'
@@ -144,6 +147,7 @@ if not df.empty:
             "data_vencimento": st.column_config.DateColumn("Vencimento", format="DD/MM/YYYY"),
             "quantidade": st.column_config.NumberColumn("Qtd", format="%d"),
             "meses_garantia": st.column_config.NumberColumn("Meses", format="%d"),
+            "Status": st.column_config.TextColumn("Status da Garantia")
         }
     )
     st.caption(f"Exibindo {len(df_filtrado)} registros.")
