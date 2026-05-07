@@ -153,15 +153,16 @@ if not df.empty:
     st.caption(f"Exibindo {len(df_filtrado)} registros.")
   
 # --- ASSINATURA AO FINAL DO APP ---
-st.markdown("---") # Linha divisória
+st.markdown("---")
 
 st.markdown(
     """
+    <link href="https://fonts.googleapis.com/css2?family=Dancing+Script:wght@700&display=swap" rel="stylesheet">
     <div style='text-align: center;'>
-        <p style='margin-bottom: 0px; font-family: serif; font-style: italic; font-size: 14px; color: #777;'>
+        <p style='margin-bottom: -10px; font-family: serif; font-style: italic; font-size: 14px; color: #777;'>
             Developed by:
         </p>
-        <p style='margin-top: 0px; font-family: sans-serif; font-weight: bold; font-size: 18px; color: #2e7d32;'>
+        <p style='font-family: "Dancing Script", cursive; font-size: 24px; color: #2e7d32;'>
             Edison Duarte Filho®
         </p>
     </div>
