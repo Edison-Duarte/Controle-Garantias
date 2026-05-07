@@ -151,5 +151,21 @@ if not df.empty:
         }
     )
     st.caption(f"Exibindo {len(df_filtrado)} registros.")
-   
+  
+# --- ASSINATURA AO FINAL DO APP ---
+st.markdown("---") # Linha divisória para separar do conteúdo
+
+st.markdown(
+    """
+    <div style='text-align: center;'>
+        <p style='margin-bottom: 0px; font-family: serif; font-style: italic; font-size: 20px; color: #555;'>
+            Developed by:
+        </p>
+        <p style='margin-top: 0px; font-family: sans-serif; font-weight: bold; font-size: 28px; color: #2e7d32;'>
+            Edison Duarte Filho®
+        </p>
+    </div>
+    """,
+    unsafe_allow_html=True
+)
 
