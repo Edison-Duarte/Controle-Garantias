@@ -83,7 +83,7 @@ with st.expander("📝 Cadastrar NF e Lote de Itens", expanded=True):
             st.session_state.lista_itens = []
             st.rerun()
 
-        if col_btn2.button("💾 SALVAR TUDO NO GOOGLE SHEETS", type="primary"):
+        if col_btn2.button("💾 SALVAR", type="primary"):
             try:
                 df_novos = pd.DataFrame(st.session_state.lista_itens)
                 df_final = pd.concat([df_existente, df_novos], ignore_index=True)
