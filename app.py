@@ -4,9 +4,9 @@ import pandas as pd
 from datetime import date
 
 # 1. Configuração da página
-st.set_page_config(page_title="Controle de Garantias", layout="wide")
+st.set_page_config(page_title="InvoiceSis - Gestão de Garantias & Custos", layout="wide")
 
-st.title("🛡️ InvoiceSis - Gestão de NF e Garantias")
+st.title("🛡️ InvoiceSis | Controle de Garantias e Custos")
 
 # 2. Conexão com Google Sheets
 conn = st.connection("gsheets", type=GSheetsConnection)
@@ -22,6 +22,11 @@ def carregar_dados():
                 if col in df.columns:
                     df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0).astype(int)
             
+            # Ajuste de valores monetários
+            for col in ['valor_unitario', 'valor_total_item', 'valor_total_nf']:
+                if col in df.columns:
+                    df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0.0).astype(float)
+            
             # Limpeza de datas
             colunas_data = ['data_emissao', 'data_vencimento']
             for col in colunas_data:
@@ -29,7 +34,7 @@ def carregar_dados():
                     df[col] = pd.to_datetime(df[col], errors='coerce').dt.date
         return df
     except Exception as e:
-        return pd.DataFrame(columns=['NF', 'data_emissao', 'Item', 'quantidade', 'Fornecedor', 'meses_garantia', 'data_vencimento'])
+        return pd.DataFrame(columns=['NF', 'data_emissao', 'valor_total_nf', 'Item', 'quantidade', 'valor_unitario', 'valor_total_item', 'Fornecedor', 'meses_garantia', 'data_vencimento'])
 
 df_existente = carregar_dados()
 
@@ -38,32 +43,38 @@ if 'lista_itens' not in st.session_state:
     st.session_state.lista_itens = []
 
 # --- FORMULÁRIO DE CADASTRO ---
-with st.expander("📝 Cadastrar NF e Lote de Itens", expanded=True):
+with st.expander("📝 Cadastrar Nova NF e Itens", expanded=True):
     # Cabeçalho da NF (Campos comuns)
-    c1, c2, c3 = st.columns([1, 1, 2])
+    c1, c2, c3, c4 = st.columns([1, 1, 1, 1])
     nf_comum = c1.text_input("Número da NF")
     data_emissao_comum = c2.date_input("Data da Emissão", value=date.today(), format="DD/MM/YYYY")
     fornecedor_comum = c3.text_input("Fornecedor")
+    valor_total_nf_comum = c4.number_input("Valor Total da NF (R$)", min_value=0.0, value=0.0, step=10.0, format="%.2f")
 
     st.divider()
     
     # Adição de Itens individuais
-    ca, cb, cc = st.columns([2, 1, 1])
-    item_nome = ca.text_input("Descrição do Item")
+    ca, cb, cc, cd = st.columns([2, 1, 1, 1])
+    item_nome = ca.text_input("Descrição do Item / Material")
     item_qtd = cb.number_input("Quantidade", min_value=1, value=1)
-    item_garantia = cc.number_input("Garantia (Meses)", min_value=1, value=12)
+    item_valor_uni = cc.number_input("Valor Unitário (R$)", min_value=0.0, value=0.0, step=1.0, format="%.2f")
+    item_garantia = cd.number_input("Garantia (Meses)", min_value=1, value=12)
     
     if st.button("➕ Adicionar à Lista"):
         if item_nome and nf_comum:
-            # Cálculo do vencimento baseado na Data da Emissão
+            # Cálculos automáticos de vencimento e valores
             dt_emissao = pd.to_datetime(data_emissao_comum)
             dt_venc = dt_emissao + pd.DateOffset(months=int(item_garantia))
+            v_total_item = float(item_qtd * item_valor_uni)
             
             st.session_state.lista_itens.append({
                 "NF": nf_comum,
                 "data_emissao": data_emissao_comum.strftime('%Y-%m-%d'),
+                "valor_total_nf": float(valor_total_nf_comum),
                 "Item": item_nome,
                 "quantidade": int(item_qtd),
+                "valor_unitario": float(item_valor_uni),
+                "valor_total_item": v_total_item,
                 "Fornecedor": fornecedor_comum,
                 "meses_garantia": int(item_garantia),
                 "data_vencimento": dt_venc.strftime('%Y-%m-%d')
@@ -76,14 +87,14 @@ with st.expander("📝 Cadastrar NF e Lote de Itens", expanded=True):
     if st.session_state.lista_itens:
         st.write("---")
         df_temp = pd.DataFrame(st.session_state.lista_itens)
-        st.dataframe(df_temp[['Item', 'quantidade', 'meses_garantia']], use_container_width=True)
+        st.dataframe(df_temp[['Item', 'quantidade', 'valor_unitario', 'valor_total_item']], use_container_width=True)
         
         col_btn1, col_btn2 = st.columns(2)
         if col_btn1.button("🗑️ Limpar Lista"):
             st.session_state.lista_itens = []
             st.rerun()
 
-        if col_btn2.button("💾 SALVAR", type="primary"):
+        if col_btn2.button("💾 SALVAR TUDO NO GOOGLE SHEETS", type="primary"):
             try:
                 df_novos = pd.DataFrame(st.session_state.lista_itens)
                 df_final = pd.concat([df_existente, df_novos], ignore_index=True)
@@ -95,8 +106,9 @@ with st.expander("📝 Cadastrar NF e Lote de Itens", expanded=True):
             except Exception as e:
                 st.error(f"Erro ao salvar: {e}")
 
-# --- HISTÓRICO COM FILTROS (ATUALIZADO) ---
+# --- HISTÓRICO, FILTROS E SOMAS FINANCEIRAS ---
 st.divider()
+st.subheader("📊 Consulta e Relatório de Gastos")
 df = carregar_dados()
 
 if not df.empty:
@@ -114,22 +126,30 @@ if not df.empty:
     
     df['Status'] = df['data_vencimento'].apply(definir_status)
 
+    # Filtros Avançados
     c_busca, c_status = st.columns([2, 1])
-    busca = c_busca.text_input("🔍 Buscar (NF, Item, Fornecedor)").lower()
+    busca = c_busca.text_input("🔍 Filtrar por Material (Item) ou Fornecedor").lower()
     status_opcoes = ["✅ ATIVA", "⚠️ VENCE EM BREVE", "❌ EXPIRADA", "⚪ SEM DATA"]
     status_selecionados = c_status.multiselect("Filtrar por Status", options=status_opcoes, default=status_opcoes)
 
-    # Filtragem
     mask = (
-        (df['NF'].astype(str).str.contains(busca, case=False) | 
-         df['Item'].astype(str).str.contains(busca, case=False) | 
+        (df['Item'].astype(str).str.contains(busca, case=False) | 
          df['Fornecedor'].astype(str).str.contains(busca, case=False)) &
         (df['Status'].isin(status_selecionados))
     )
     
-    # Selecionamos apenas as colunas que queremos exibir (removendo data_compra)
-    colunas_exibicao = ['NF', 'data_emissao', 'Item', 'quantidade', 'Fornecedor', 'meses_garantia', 'data_vencimento', 'Status']
+    # Filtrando as colunas corretas para exibição
+    colunas_exibicao = ['NF', 'data_emissao', 'valor_total_nf', 'Item', 'quantidade', 'valor_unitario', 'valor_total_item', 'Fornecedor', 'meses_garantia', 'data_vencimento', 'Status']
     df_filtrado = df.loc[mask, [c for c in colunas_exibicao if c in df.columns]]
+
+    # --- CÁLCULO DAS SOMAS DINÂMICAS ---
+    total_gasto = df_filtrado['valor_total_item'].sum() if 'valor_total_item' in df_filtrado.columns else 0.0
+    total_qtd = df_filtrado['quantidade'].sum() if 'quantidade' in df_filtrado.columns else 0
+    
+    # Exibição dos Totais Calculados
+    m1, m2 = st.columns(2)
+    m1.metric(label="💰 Total Gasto no Filtro Atual", value=f"R$ {total_gasto:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+    m2.metric(label="📦 Quantidade Total de Itens", value=f"{total_qtd} un")
 
     def style_status(val):
         if '❌' in str(val): return 'background-color: #ffebee; color: #b71c1c; font-weight: bold'
@@ -142,29 +162,4 @@ if not df.empty:
         use_container_width=True,
         hide_index=True,
         column_config={
-            "NF": st.column_config.TextColumn("NF"),
-            "data_emissao": st.column_config.DateColumn("Emissão", format="DD/MM/YYYY"),
-            "data_vencimento": st.column_config.DateColumn("Vencimento", format="DD/MM/YYYY"),
-            "quantidade": st.column_config.NumberColumn("Qtd", format="%d"),
-            "meses_garantia": st.column_config.NumberColumn("Meses", format="%d"),
-            "Status": st.column_config.TextColumn("Status da Garantia")
-        }
-    )
-    st.caption(f"Exibindo {len(df_filtrado)} registros.")
-  
-# --- ASSINATURA FINALIZADA COM FONTE GABRIOLA ---
-st.markdown("---")
-
-st.markdown(
-    """
-    <div style='text-align: center; margin-top: 150px;'>
-        <p style='margin-bottom: -8px; font-family: "Gabriola", serif; font-style: italic; font-size: 18px; color: #0056b3;'>
-            Developed by:
-        </p>
-        <p style='font-family: "Gabriola", serif; font-size: 20px; font-weight: 100; color: #1e7044;'>
-            Edison Duarte Filho®
-        </p>
-    </div>
-    """,
-    unsafe_allow_html=True
-)
+            "NF": st.column_config.TextColumn
