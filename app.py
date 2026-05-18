@@ -162,4 +162,32 @@ if not df.empty:
         use_container_width=True,
         hide_index=True,
         column_config={
-            "NF": st.column_config.TextColumn
+            "NF": st.column_config.TextColumn("NF"),
+            "data_emissao": st.column_config.DateColumn("Emissão", format="DD/MM/YYYY"),
+            "valor_total_nf": st.column_config.NumberColumn("Total NF", format="R$ %.2f"),
+            "Item": st.column_config.TextColumn("Material / Item"),
+            "quantidade": st.column_config.NumberColumn("Qtd", format="%d"),
+            "valor_unitario": st.column_config.NumberColumn("Val. Unitário", format="R$ %.2f"),
+            "valor_total_item": st.column_config.NumberColumn("Total Item", format="R$ %.2f"),
+            "meses_garantia": st.column_config.NumberColumn("Meses", format="%d"),
+            "data_vencimento": st.column_config.DateColumn("Vencimento", format="DD/MM/YYYY"),
+        }
+    )
+    st.caption(f"Exibindo {len(df_filtrado)} registros encontrados.")
+
+# --- ASSINATURA FINALIZADA (TAMANHO 14 E 18) ---
+st.markdown("---")
+
+st.markdown(
+    """
+    <div style='text-align: center; margin-top: 50px;'>
+        <p style='margin-bottom: 2px; font-family: "Gabriola", serif; font-style: italic; font-size: 14px; color: #0056b3;'>
+            Developed by:
+        </p>
+        <p style='margin-top: 0px; font-family: "Gabriola", serif; font-size: 18px; font-weight: bold; color: #1e7044;'>
+            Edison Duarte Filho®
+        </p>
+    </div>
+    """,
+    unsafe_allow_html=True
+)
