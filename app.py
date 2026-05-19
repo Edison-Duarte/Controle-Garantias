@@ -17,12 +17,15 @@ conn = st.connection("gsheets", type=GSheetsConnection)
 def normalizar_texto(texto):
     if pd.isnull(texto) or not isinstance(texto, str):
         return ""
+    # Transforma em minúscula
     texto = texto.lower()
     # Remove acentos (Ex: lâmpada -> lampada)
     texto = ''.join(c for c in unicodedata.normalize('NFD', texto) if unicodedata.category(c) != 'Mn')
-    # Remove pontuações e caracteres especiais
+    # Remove pontuações e caracteres especiais (mantém apenas letras e números)
     texto = re.sub(r'[^\w\s]', '', texto)
-    return " ".join(texto.split())
+    # Remove espaços extras nas pontas e espaços duplos
+    texto = " ".join(texto.split())
+    return texto
 
 def carregar_dados():
     try:
@@ -30,6 +33,7 @@ def carregar_dados():
         df = conn.read(spreadsheet=url_planilha, worksheet="Garantias", ttl=0)
         if df is not None and not df.empty:
             df = df.dropna(how='all')
+            # Forçar tipos de dados corretos para evitar erros
             if 'NF' in df.columns:
                 df['NF'] = df['NF'].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
             for col in ['meses_garantia', 'quantidade']:
@@ -133,37 +137,26 @@ if not df.empty:
     
     df['Status'] = df['data_vencimento'].apply(definir_status)
 
-    # 1. BARRA DE PESQUISA GLOBAL (Ignora acentos, maiúsculas e pontuação perfeitamente)
-    busca_rapida = st.text_input("🔍 Busca Rápida Avançada (Podes digitar sem acentos, ex: 'lampada', 'luminaria', 'fornecedor'):", placeholder="Digita qualquer termo para filtrar a tabela inteira...").strip()
-    busca_rapida_norm = normalizar_texto(busca_rapida)
-
-    # Captura listas únicas originais para os filtros complementares
+    # Captura listas únicas originais para visualização amigável nos componentes do filtro
     lista_materiais = sorted(df['Item'].dropna().unique().tolist())
     lista_fornecedores = sorted(df['Fornecedor'].dropna().unique().tolist())
     lista_nfs = sorted(df['NF'].dropna().unique().tolist())
     status_opcoes = ["✅ ATIVA", "⚠️ VENCE EM BREVE", "❌ EXPIRADA", "⚪ SEM DATA"]
 
-    # Filtros estruturados adicionais
     c_mat, c_forn, c_nf, c_stat = st.columns([1.5, 1.5, 1, 1])
-    buscar_materiais = c_mat.multiselect("📦 Filtrar por Material(is) da Lista", options=lista_materiais, default=None, placeholder="Todos os materiais")
-    buscar_fornecedores = c_forn.multiselect("🏭 Filtrar por Fornecedor(es) da Lista", options=lista_fornecedores, default=None, placeholder="Todos os fornecedores")
+    
+    buscar_materiais = c_mat.multiselect("📦 Filtrar por Material(is)", options=lista_materiais, default=None, placeholder="Todos os materiais")
+    buscar_fornecedores = c_forn.multiselect("🏭 Filtrar por Fornecedor(es)", options=lista_fornecedores, default=None, placeholder="Todos os fornecedores")
     buscar_nfs = c_nf.multiselect("🧾 Filtrar por Nota(s)", options=lista_nfs, default=None, placeholder="Todas as NFs")
     status_selecionados = c_stat.multiselect("🛡️ Status da Garantia", options=status_opcoes, default=status_opcoes)
 
-    # --- LÓGICA DE FILTRAGEM COMBINADA ---
+    # --- LÓGICA DE FILTRAGEM INTELIGENTE (IGNORANDO ACENTOS E MAIÚSCULAS) ---
     mask = df['Status'].isin(status_selecionados)
     
-    # Aplicar Filtro da Barra de Pesquisa Rápida (caso o utilizador digite algo)
-    if busca_rapida_norm:
-        mask = mask & (
-            df['Item'].apply(normalizar_texto).str.contains(busca_rapida_norm, case=False, na=False) |
-            df['Fornecedor'].apply(normalizar_texto).str.contains(busca_rapida_norm, case=False, na=False) |
-            df['NF'].apply(normalizar_texto).str.contains(busca_rapida_norm, case=False, na=False)
-        )
-
-    # Aplicar Filtros dos Menus de Seleção Múltipla (se forem utilizados)
     if buscar_materiais:
+        # Normaliza as opções selecionadas pelo usuário
         materiais_norm = [normalizar_texto(m) for m in buscar_materiais]
+        # Aplica a máscara comparando as versões normalizadas dos dados da planilha
         mask = mask & (df['Item'].apply(normalizar_texto).isin(materiais_norm))
         
     if buscar_fornecedores:
@@ -178,7 +171,7 @@ if not df.empty:
     df_filtrado = df.loc[mask, [c for c in colunas_exibicao if c in df.columns]].copy()
     df_filtrado['ID_Original'] = df_filtrado.index
 
-    # Métricas Dinâmicas
+    # Métricas Dinâmicas Multi-Filtro
     total_gasto = df_filtrado['valor_total_item'].sum() if 'valor_total_item' in df_filtrado.columns else 0.0
     total_qtd = df_filtrado['quantidade'].sum() if 'quantidade' in df_filtrado.columns else 0
     
@@ -192,7 +185,7 @@ if not df.empty:
         if '✅' in str(val): return 'background-color: #e8f5e9; color: #1b5e20; font-weight: bold'
         return ''
 
-    # Tabela principal
+    # Tabela principal (Continua exibindo o texto bonito e original com acentos para o usuário)
     st.dataframe(
         df_filtrado.style.map(style_status, subset=['Status']),
         use_container_width=True,
@@ -211,7 +204,7 @@ if not df.empty:
         }
     )
     
-    # --- PAINEL DE MODIFICAÇÃO DE REGISTROS ---
+    # --- PAINEL DE MODIFICAÇÃO DE REGISTROS (TAMBÉM ATUALIZADO COM BUSCA INTELIGENTE) ---
     st.write("---")
     with st.expander("✏️ Painel de Modificação de Registros (Editar ou Apagar)"):
         
@@ -219,10 +212,11 @@ if not df.empty:
         busca_interna_norm = normalizar_texto(busca_interna)
         
         if busca_interna_norm:
+            # A busca interna agora também normaliza o banco de dados temporariamente para comparar
             mask_interna = (
-                df['NF'].apply(normalizar_texto).str.contains(busca_interna_norm, case=False, na=False) |
-                df['Fornecedor'].apply(normalizar_texto).str.contains(busca_interna_norm, case=False, na=False) |
-                df['Item'].apply(normalizar_texto).str.contains(busca_interna_norm, case=False, na=False)
+                df['NF'].apply(normalizar_texto).str.contains(busca_interna_norm, case=False) |
+                df['Fornecedor'].apply(normalizar_texto).str.contains(busca_interna_norm, case=False) |
+                df['Item'].apply(normalizar_texto).str.contains(busca_interna_norm, case=False)
             )
             df_opcoes = df[mask_interna]
         else:
@@ -303,18 +297,18 @@ if not df.empty:
                         
     st.caption(f"Exibindo {len(df_filtrado)} registros encontrados.")
 
-# --- ASSINATURA AJUSTADA PARA PREVENIR ERROS DE LAYOUT ---
+# --- ASSINATURA FINALIZADA (COMO AJUSTADO PELO EDISON) ---
 st.markdown("---")
 
 st.markdown(
     """
-    <div style='text-align: center; margin-top: 40px; padding-bottom: 20px;'>
-        <div style='font-family: "Gabriola", serif; font-style: italic; font-size: 18px; color: #0056b3; line-height: 1.2;'>
+    <div style='text-align: center; margin-top: 50px;'>
+        <p style='margin-bottom: 2px; font-family: "Gabriola", serif; font-style: italic; font-size: 14px; color: #0056b3;'>
             Developed by:
-        </div>
-        <div style='font-family: "Gabriola", serif; font-size: 22px; font-weight: bold; color: #1e7044; line-height: 1.2; margin-top: 4px;'>
+        </p>
+        <p style='margin-top: 0px; font-family: "Gabriola", serif; font-size: 18px; font-weight: bold; color: #1e7044;'>
             Edison Duarte Filho®
-        </div>
+        </p>
     </div>
     """,
     unsafe_allow_html=True
