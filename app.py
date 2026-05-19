@@ -134,7 +134,7 @@ if not df.empty:
     df['Status'] = df['data_vencimento'].apply(definir_status)
 
     # 1. BARRA DE PESQUISA GLOBAL (Ignora acentos, maiúsculas e pontuação perfeitamente)
-    busca_rapida = st.text_input("🔍 Busca Rápida Avançada (Podes digitar sem acentos, ex: 'lampada', 'luminaria', 'fornecedor'):", placeholder="Digita qualquer termo para filtrar a tabela inteira...").strip()
+    busca_rapida = st.text_input("🔍 Busca Rápida:", placeholder="Digita qualquer termo para filtrar a tabela inteira...").strip()
     busca_rapida_norm = normalizar_texto(busca_rapida)
 
     # Captura listas únicas originais para os filtros complementares
