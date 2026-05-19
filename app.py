@@ -303,18 +303,18 @@ if not df.empty:
                         
     st.caption(f"Exibindo {len(df_filtrado)} registros encontrados.")
 
-# --- ASSINATURA AJUSTADA PARA PREVENIR ERROS DE LAYOUT ---
+# --- ASSINATURA FINALIZADA COM FONTE GABRIOLA ---
 st.markdown("---")
 
 st.markdown(
     """
-    <div style='text-align: center; margin-top: 40px; padding-bottom: 20px;'>
-        <div style='font-family: "Gabriola", serif; font-style: italic; font-size: 18px; color: #0056b3; line-height: 1.2;'>
+    <div style='text-align: center; margin-top: 100px;'>
+        <p style='margin-bottom: -8px; font-family: "Gabriola", serif; font-style: italic; font-size: 18px; color: #0056b3;'>
             Developed by:
-        </div>
-        <div style='font-family: "Gabriola", serif; font-size: 22px; font-weight: bold; color: #1e7044; line-height: 1.2; margin-top: 4px;'>
+        </p>
+        <p style='font-family: "Gabriola", serif; font-size: 20px; font-weight: 100; color: #1e7044;'>
             Edison Duarte Filho®
-        </div>
+        </p>
     </div>
     """,
     unsafe_allow_html=True
