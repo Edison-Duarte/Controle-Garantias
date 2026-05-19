@@ -17,17 +17,16 @@ def carregar_dados():
         df = conn.read(spreadsheet=url_planilha, worksheet="Garantias", ttl=0)
         if df is not None and not df.empty:
             df = df.dropna(how='all')
-            # Ajuste de tipos numéricos
-            for col in ['NF', 'meses_garantia', 'quantidade']:
+            # Forçar tipos de dados corretos para evitar erros
+            if 'NF' in df.columns:
+                df['NF'] = df['NF'].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
+            for col in ['meses_garantia', 'quantidade']:
                 if col in df.columns:
                     df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0).astype(int)
-            
-            # Ajuste de valores monetários
             for col in ['valor_unitario', 'valor_total_item', 'valor_total_nf']:
                 if col in df.columns:
                     df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0.0).astype(float)
             
-            # Limpeza de datas
             colunas_data = ['data_emissao', 'data_vencimento']
             for col in colunas_data:
                 if col in df.columns:
@@ -43,32 +42,29 @@ if 'lista_itens' not in st.session_state:
     st.session_state.lista_itens = []
 
 # --- FORMULÁRIO DE CADASTRO ---
-with st.expander("📝 Cadastrar Nova NF e Itens", expanded=True):
-    # Cabeçalho da NF (Campos comuns)
+with st.expander("📝 Cadastrar Nova NF e Itens", expanded=False):
     c1, c2, c3, c4 = st.columns([1, 1, 1, 1])
-    nf_comum = c1.text_input("Número da NF")
-    data_emissao_comum = c2.date_input("Data da Emissão", value=date.today(), format="DD/MM/YYYY")
-    fornecedor_comum = c3.text_input("Fornecedor")
-    valor_total_nf_comum = c4.number_input("Valor Total da NF (R$)", min_value=0.0, value=0.0, step=10.0, format="%.2f")
+    nf_comum = c1.text_input("Número da NF", key="cad_nf")
+    data_emissao_comum = c2.date_input("Data da Emissão", value=date.today(), format="DD/MM/YYYY", key="cad_data")
+    fornecedor_comum = c3.text_input("Fornecedor", key="cad_forn")
+    valor_total_nf_comum = c4.number_input("Valor Total da NF (R$)", min_value=0.0, value=0.0, step=10.0, format="%.2f", key="cad_val_nf")
 
     st.divider()
     
-    # Adição de Itens individuais
     ca, cb, cc, cd = st.columns([2, 1, 1, 1])
-    item_nome = ca.text_input("Descrição do Item / Material")
-    item_qtd = cb.number_input("Quantidade", min_value=1, value=1)
-    item_valor_uni = cc.number_input("Valor Unitário (R$)", min_value=0.0, value=0.0, step=1.0, format="%.2f")
-    item_garantia = cd.number_input("Garantia (Meses)", min_value=1, value=12)
+    item_nome = ca.text_input("Descrição do Item / Material", key="cad_item")
+    item_qtd = cb.number_input("Quantidade", min_value=1, value=1, key="cad_qtd")
+    item_valor_uni = cc.number_input("Valor Unitário (R$)", min_value=0.0, value=0.0, step=1.0, format="%.2f", key="cad_val_uni")
+    item_garantia = cd.number_input("Garantia (Meses)", min_value=1, value=12, key="cad_gar")
     
     if st.button("➕ Adicionar à Lista"):
         if item_nome and nf_comum:
-            # Cálculos automáticos de vencimento e valores
             dt_emissao = pd.to_datetime(data_emissao_comum)
             dt_venc = dt_emissao + pd.DateOffset(months=int(item_garantia))
             v_total_item = float(item_qtd * item_valor_uni)
             
             st.session_state.lista_itens.append({
-                "NF": nf_comum,
+                "NF": str(nf_comum).strip(),
                 "data_emissao": data_emissao_comum.strftime('%Y-%m-%d'),
                 "valor_total_nf": float(valor_total_nf_comum),
                 "Item": item_nome,
@@ -83,7 +79,6 @@ with st.expander("📝 Cadastrar Nova NF e Itens", expanded=True):
         else:
             st.error("Preencha o número da NF e a Descrição do Item.")
 
-    # Tabela temporária de itens
     if st.session_state.lista_itens:
         st.write("---")
         df_temp = pd.DataFrame(st.session_state.lista_itens)
@@ -126,27 +121,27 @@ if not df.empty:
     
     df['Status'] = df['data_vencimento'].apply(definir_status)
 
-    # Filtros Avançados
+    # Filtros Avançados (NF incluída na busca por texto)
     c_busca, c_status = st.columns([2, 1])
-    busca = c_busca.text_input("🔍 Filtrar por Material (Item) ou Fornecedor").lower()
+    busca = c_busca.text_input("🔍 Filtrar por Material, Fornecedor ou Número da NF").lower().strip()
     status_opcoes = ["✅ ATIVA", "⚠️ VENCE EM BREVE", "❌ EXPIRADA", "⚪ SEM DATA"]
     status_selecionados = c_status.multiselect("Filtrar por Status", options=status_opcoes, default=status_opcoes)
 
     mask = (
         (df['Item'].astype(str).str.contains(busca, case=False) | 
-         df['Fornecedor'].astype(str).str.contains(busca, case=False)) &
+         df['Fornecedor'].astype(str).str.contains(busca, case=False) |
+         df['NF'].astype(str).str.contains(busca, case=False)) &
         (df['Status'].isin(status_selecionados))
     )
     
-    # Filtrando as colunas corretas para exibição
     colunas_exibicao = ['NF', 'data_emissao', 'valor_total_nf', 'Item', 'quantidade', 'valor_unitario', 'valor_total_item', 'Fornecedor', 'meses_garantia', 'data_vencimento', 'Status']
-    df_filtrado = df.loc[mask, [c for c in colunas_exibicao if c in df.columns]]
+    df_filtrado = df.loc[mask, [c for c in colunas_exibicao if c in df.columns]].copy()
+    df_filtrado['ID_Original'] = df_filtrado.index # Guarda o índice real para edição
 
-    # --- CÁLCULO DAS SOMAS DINÂMICAS ---
+    # Métricas Dinâmicas
     total_gasto = df_filtrado['valor_total_item'].sum() if 'valor_total_item' in df_filtrado.columns else 0.0
     total_qtd = df_filtrado['quantidade'].sum() if 'quantidade' in df_filtrado.columns else 0
     
-    # Exibição dos Totais Calculados
     m1, m2 = st.columns(2)
     m1.metric(label="💰 Total Gasto no Filtro Atual", value=f"R$ {total_gasto:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
     m2.metric(label="📦 Quantidade Total de Itens", value=f"{total_qtd} un")
@@ -157,10 +152,16 @@ if not df.empty:
         if '✅' in str(val): return 'background-color: #e8f5e9; color: #1b5e20; font-weight: bold'
         return ''
 
-    st.dataframe(
+    # Tabela com seleção de linha para permitir edição rápida
+    st.write("👉 *Selecione uma linha na tabela abaixo para editá-la usando o painel inferior:*")
+    
+    # Configuração de seleção de linha única no Streamlit
+    evento_selecao = st.dataframe(
         df_filtrado.style.map(style_status, subset=['Status']),
         use_container_width=True,
         hide_index=True,
+        on_select="rerun",
+        selection_mode="single_row",
         column_config={
             "NF": st.column_config.TextColumn("NF"),
             "data_emissao": st.column_config.DateColumn("Emissão", format="DD/MM/YYYY"),
@@ -171,20 +172,73 @@ if not df.empty:
             "valor_total_item": st.column_config.NumberColumn("Total Item", format="R$ %.2f"),
             "meses_garantia": st.column_config.NumberColumn("Meses", format="%d"),
             "data_vencimento": st.column_config.DateColumn("Vencimento", format="DD/MM/YYYY"),
+            "ID_Original": None # Oculta do usuário
         }
     )
+
+    # --- SISTEMA DE EDIÇÃO DE REGISTROS ---
+    linhas_selecionadas = evento_selecao.get("selection", {}).get("rows", [])
+    
+    if linhas_selecionadas:
+        index_filtrado = linhas_selecionadas[0]
+        registro_selecionado = df_filtrado.iloc[index_filtrado]
+        idx_real_planilha = registro_selecionado['ID_Original']
+        
+        with st.expander(f"✏️ Editar Item Selecionado (NF: {registro_selecionado['NF']})", expanded=True):
+            ed_c1, ed_c2, ed_c3, ed_c4 = st.columns([1, 1, 1, 1])
+            ed_nf = ed_c1.text_input("Número da NF", value=str(registro_selecionado['NF']), key="ed_nf")
+            ed_data = ed_c2.date_input("Data da Emissão", value=pd.to_datetime(registro_selecionado['data_emissao']).date(), format="DD/MM/YYYY", key="ed_data")
+            ed_forn = ed_c3.text_input("Fornecedor", value=str(registro_selecionado['Fornecedor']), key="ed_forn")
+            ed_total_nf = ed_c4.number_input("Valor Total da NF (R$)", min_value=0.0, value=float(registro_selecionado['valor_total_nf']), step=10.0, format="%.2f", key="ed_tot_nf")
+            
+            ed_ca, ed_cb, ed_cc, ed_cd = st.columns([2, 1, 1, 1])
+            ed_item = ed_ca.text_input("Descrição do Item", value=str(registro_selecionado['Item']), key="ed_item")
+            ed_qtd = ed_cb.number_input("Quantidade", min_value=1, value=int(registro_selecionado['quantidade']), key="ed_qtd")
+            ed_uni = ed_cc.number_input("Valor Unitário (R$)", min_value=0.0, value=float(registro_selecionado['valor_unitario']), step=1.0, format="%.2f", key="ed_uni")
+            ed_gar = ed_cd.number_input("Garantia (Meses)", min_value=1, value=int(registro_selecionado['meses_garantia']), key="ed_gar")
+            
+            if st.button("💾 Salvar Alterações", type="primary"):
+                try:
+                    # Recalcular os campos derivados baseados nas mudanças
+                    dt_emissao_ed = pd.to_datetime(ed_data)
+                    dt_venc_ed = dt_emissao_ed + pd.DateOffset(months=int(ed_gar))
+                    v_total_item_ed = float(ed_qtd * ed_uni)
+                    
+                    # Atualizar o DataFrame principal na memória
+                    df.at[idx_real_planilha, 'NF'] = str(ed_nf).strip()
+                    df.at[idx_real_planilha, 'data_emissao'] = ed_data.strftime('%Y-%m-%d')
+                    df.at[idx_real_planilha, 'valor_total_nf'] = float(ed_total_nf)
+                    df.at[idx_real_planilha, 'Item'] = ed_item
+                    df.at[idx_real_planilha, 'quantidade'] = int(ed_qtd)
+                    df.at[idx_real_planilha, 'valor_unitario'] = float(ed_uni)
+                    df.at[idx_real_planilha, 'valor_total_item'] = v_total_item_ed
+                    df.at[idx_real_planilha, 'Fornecedor'] = ed_forn
+                    df.at[idx_real_planilha, 'meses_garantia'] = int(ed_gar)
+                    df.at[idx_real_planilha, 'data_vencimento'] = dt_venc_ed.strftime('%Y-%m-%d')
+                    
+                    # Limpeza antes de enviar de volta pro gsheets
+                    if 'Status' in df.columns: df = df.drop(columns=['Status'])
+                    if 'ID_Original' in df.columns: df = df.drop(columns=['ID_Original'])
+                    
+                    url_planilha = st.secrets["connections"]["gsheets"]["spreadsheet"]
+                    conn.update(spreadsheet=url_planilha, worksheet="Garantias", data=df)
+                    st.success("✅ Alteração gravada com sucesso!")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Erro ao atualizar: {e}")
+                    
     st.caption(f"Exibindo {len(df_filtrado)} registros encontrados.")
 
-# --- ASSINATURA FINALIZADA COM FONTE GABRIOLA ---
+# --- ASSINATURA FINALIZADA (TAMANHO 14 E 18) ---
 st.markdown("---")
 
 st.markdown(
     """
-    <div style='text-align: center; margin-top: 100px;'>
-        <p style='margin-bottom: -8px; font-family: "Gabriola", serif; font-style: italic; font-size: 18px; color: #0056b3;'>
+    <div style='text-align: center; margin-top: 50px;'>
+        <p style='margin-bottom: 2px; font-family: "Gabriola", serif; font-style: italic; font-size: 14px; color: #0056b3;'>
             Developed by:
         </p>
-        <p style='font-family: "Gabriola", serif; font-size: 20px; font-weight: 100; color: #1e7044;'>
+        <p style='margin-top: 0px; font-family: "Gabriola", serif; font-size: 18px; font-weight: bold; color: #1e7044;'>
             Edison Duarte Filho®
         </p>
     </div>
