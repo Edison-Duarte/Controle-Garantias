@@ -2,6 +2,8 @@ import streamlit as st
 from streamlit_gsheets import GSheetsConnection
 import pandas as pd
 from datetime import date
+import unicodedata
+import re
 
 # 1. Configuração da página
 st.set_page_config(page_title="InvoiceSis - Gestão de Garantias & Custos", layout="wide")
@@ -10,6 +12,20 @@ st.title("🛡️ InvoiceSis | Controle de Garantias e Custos")
 
 # 2. Conexão com Google Sheets
 conn = st.connection("gsheets", type=GSheetsConnection)
+
+# Função para remover acentos, pontuação e ignorar maiúsculas/minúsculas
+def normalizar_texto(texto):
+    if pd.isnull(texto) or not isinstance(texto, str):
+        return ""
+    # Transforma em minúscula
+    texto = texto.lower()
+    # Remove acentos (Ex: lâmpada -> lampada)
+    texto = ''.join(c for c in unicodedata.normalize('NFD', texto) if unicodedata.category(c) != 'Mn')
+    # Remove pontuações e caracteres especiais (mantém apenas letras e números)
+    texto = re.sub(r'[^\w\s]', '', texto)
+    # Remove espaços extras nas pontas e espaços duplos
+    texto = " ".join(texto.split())
+    return texto
 
 def carregar_dados():
     try:
@@ -121,8 +137,7 @@ if not df.empty:
     
     df['Status'] = df['data_vencimento'].apply(definir_status)
 
-    # --- NOVOS FILTROS MÚLTIPLOS INTELIGENTES ---
-    # Captura listas únicas de materiais, fornecedores e NFs cadastrados para alimentar os filtros
+    # Captura listas únicas originais para visualização amigável nos componentes do filtro
     lista_materiais = sorted(df['Item'].dropna().unique().tolist())
     lista_fornecedores = sorted(df['Fornecedor'].dropna().unique().tolist())
     lista_nfs = sorted(df['NF'].dropna().unique().tolist())
@@ -130,21 +145,27 @@ if not df.empty:
 
     c_mat, c_forn, c_nf, c_stat = st.columns([1.5, 1.5, 1, 1])
     
-    # Multiselects com opções dinâmicas da planilha
     buscar_materiais = c_mat.multiselect("📦 Filtrar por Material(is)", options=lista_materiais, default=None, placeholder="Todos os materiais")
     buscar_fornecedores = c_forn.multiselect("🏭 Filtrar por Fornecedor(es)", options=lista_fornecedores, default=None, placeholder="Todos os fornecedores")
     buscar_nfs = c_nf.multiselect("🧾 Filtrar por Nota(s)", options=lista_nfs, default=None, placeholder="Todas as NFs")
     status_selecionados = c_stat.multiselect("🛡️ Status da Garantia", options=status_opcoes, default=status_opcoes)
 
-    # Construção da lógica de filtro (Se a lista do filtro estiver vazia, ele considera "todos")
+    # --- LÓGICA DE FILTRAGEM INTELIGENTE (IGNORANDO ACENTOS E MAIÚSCULAS) ---
     mask = df['Status'].isin(status_selecionados)
     
     if buscar_materiais:
-        mask = mask & (df['Item'].isin(buscar_materiais))
+        # Normaliza as opções selecionadas pelo usuário
+        materiais_norm = [normalizar_texto(m) for m in buscar_materiais]
+        # Aplica a máscara comparando as versões normalizadas dos dados da planilha
+        mask = mask & (df['Item'].apply(normalizar_texto).isin(materiais_norm))
+        
     if buscar_fornecedores:
-        mask = mask & (df['Fornecedor'].isin(buscar_fornecedores))
+        fornecedores_norm = [normalizar_texto(f) for f in buscar_fornecedores]
+        mask = mask & (df['Fornecedor'].apply(normalizar_texto).isin(fornecedores_norm))
+        
     if buscar_nfs:
-        mask = mask & (df['NF'].isin(buscar_nfs))
+        nfs_norm = [normalizar_texto(n) for n in buscar_nfs]
+        mask = mask & (df['NF'].apply(normalizar_texto).isin(nfs_norm))
     
     colunas_exibicao = ['NF', 'data_emissao', 'valor_total_nf', 'Item', 'quantidade', 'valor_unitario', 'valor_total_item', 'Fornecedor', 'meses_garantia', 'data_vencimento', 'Status']
     df_filtrado = df.loc[mask, [c for c in colunas_exibicao if c in df.columns]].copy()
@@ -164,7 +185,7 @@ if not df.empty:
         if '✅' in str(val): return 'background-color: #e8f5e9; color: #1b5e20; font-weight: bold'
         return ''
 
-    # Tabela principal
+    # Tabela principal (Continua exibindo o texto bonito e original com acentos para o usuário)
     st.dataframe(
         df_filtrado.style.map(style_status, subset=['Status']),
         use_container_width=True,
@@ -183,17 +204,19 @@ if not df.empty:
         }
     )
     
-    # --- PAINEL DE MODIFICAÇÃO DE REGISTROS ---
+    # --- PAINEL DE MODIFICAÇÃO DE REGISTROS (TAMBÉM ATUALIZADO COM BUSCA INTELIGENTE) ---
     st.write("---")
     with st.expander("✏️ Painel de Modificação de Registros (Editar ou Apagar)"):
         
-        busca_interna = st.text_input("🔍 Procurar nota para modificar por número, fornecedor ou item:", key="busca_painel").strip().lower()
+        busca_interna = st.text_input("🔍 Procurar nota para modificar por número, fornecedor ou item:", key="busca_painel").strip()
+        busca_interna_norm = normalizar_texto(busca_interna)
         
-        if busca_interna:
+        if busca_interna_norm:
+            # A busca interna agora também normaliza o banco de dados temporariamente para comparar
             mask_interna = (
-                df['NF'].astype(str).str.contains(busca_interna, case=False) |
-                df['Fornecedor'].astype(str).str.contains(busca_interna, case=False) |
-                df['Item'].astype(str).str.contains(busca_interna, case=False)
+                df['NF'].apply(normalizar_texto).str.contains(busca_interna_norm, case=False) |
+                df['Fornecedor'].apply(normalizar_texto).str.contains(busca_interna_norm, case=False) |
+                df['Item'].apply(normalizar_texto).str.contains(busca_interna_norm, case=False)
             )
             df_opcoes = df[mask_interna]
         else:
@@ -274,16 +297,16 @@ if not df.empty:
                         
     st.caption(f"Exibindo {len(df_filtrado)} registros encontrados.")
 
-# --- ASSINATURA FINALIZADA COM FONTE GABRIOLA ---
+# --- ASSINATURA FINALIZADA (COMO AJUSTADO PELO EDISON) ---
 st.markdown("---")
 
 st.markdown(
     """
-    <div style='text-align: center; margin-top: 100px;'>
-        <p style='margin-bottom: -8px; font-family: "Gabriola", serif; font-style: italic; font-size: 18px; color: #0056b3;'>
+    <div style='text-align: center; margin-top: 50px;'>
+        <p style='margin-bottom: 2px; font-family: "Gabriola", serif; font-style: italic; font-size: 14px; color: #0056b3;'>
             Developed by:
         </p>
-        <p style='font-family: "Gabriola", serif; font-size: 20px; font-weight: 100; color: #1e7044;'>
+        <p style='margin-top: 0px; font-family: "Gabriola", serif; font-size: 18px; font-weight: bold; color: #1e7044;'>
             Edison Duarte Filho®
         </p>
     </div>
