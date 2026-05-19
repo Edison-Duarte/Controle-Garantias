@@ -152,7 +152,7 @@ if not df.empty:
         if '✅' in str(val): return 'background-color: #e8f5e9; color: #1b5e20; font-weight: bold'
         return ''
 
-    # Exibição segura dos dados do relatório principal
+    # Exibição dos dados do relatório principal
     st.dataframe(
         df_filtrado.style.map(style_status, subset=['Status']),
         use_container_width=True,
@@ -171,14 +171,12 @@ if not df.empty:
         }
     )
     
-    # --- PAINEL DE MODIFICAÇÃO DE REGISTROS (COM BUSCA INTERNA E EXCLUSÃO) ---
+    # --- PAINEL DE MODIFICAÇÃO DE REGISTROS (COM DADOS PREENCHIDOS AUTOMATICAMENTE) ---
     st.write("---")
     with st.expander("✏️ Painel de Modificação de Registros (Editar ou Apagar)"):
         
-        # Campo de busca interno do painel solicitado por você
         busca_interna = st.text_input("🔍 Procurar nota para modificar por número, fornecedor ou item:", key="busca_painel").strip().lower()
         
-        # Aplica o filtro interno com base na digitação
         if busca_interna:
             mask_interna = (
                 df['NF'].astype(str).str.contains(busca_interna, case=False) |
@@ -187,9 +185,8 @@ if not df.empty:
             )
             df_opcoes = df[mask_interna]
         else:
-            df_opcoes = df  # Se estiver vazio, mostra todas as opções da planilha
+            df_opcoes = df
 
-        # Cria o dicionário mapeando os textos elegíveis para o ID real
         lista_opcoes_edicao = {}
         for idx, row in df_opcoes.iterrows():
             texto_opcao = f"NF: {row['NF']} | Forn: {row['Fornecedor']} | Item: {row['Item']} (Ref: {idx})"
@@ -202,81 +199,83 @@ if not df.empty:
                 idx_real_planilha = lista_opcoes_edicao[item_para_editar]
                 registro_selecionado = df.loc[idx_real_planilha]
                 
-                # Campos para Edição
-                ed_c1, ed_c2, ed_c3, ed_c4 = st.columns([1, 1, 1, 1])
-                ed_nf = ed_c1.text_input("Número da NF", value=str(registro_selecionado['NF']), key="ed_nf")
-                ed_data = ed_c2.date_input("Data da Emissão", value=pd.to_datetime(registro_selecionado['data_emissao']).date(), format="DD/MM/YYYY", key="ed_data")
-                ed_forn = ed_c3.text_input("Fornecedor", value=str(registro_selecionado['Fornecedor']), key="ed_forn")
-                ed_total_nf = ed_c4.number_input("Valor Total da NF (R$)", min_value=0.0, value=float(registro_selecionado['valor_total_nf']), step=10.0, format="%.2f", key="ed_tot_nf")
-                
-                ed_ca, ed_cb, ed_cc, ed_cd = st.columns([2, 1, 1, 1])
-                ed_item = ed_ca.text_input("Descrição do Item", value=str(registro_selecionado['Item']), key="ed_item")
-                ed_qtd = ed_cb.number_input("Quantidade", min_value=1, value=int(registro_selecionado['quantidade']), key="ed_qtd")
-                ed_uni = ed_cc.number_input("Valor Unitário (R$)", min_value=0.0, value=float(registro_selecionado['valor_unitario']), step=1.0, format="%.2f", key="ed_uni")
-                ed_gar = ed_cd.number_input("Garantia (Meses)", min_value=1, value=int(registro_selecionado['meses_garantia']), key="ed_gar")
-                
-                st.write("")
-                btn_col1, btn_col2 = st.columns([1, 1])
-                
-                # AÇÃO 1: SALVAR ALTERAÇÕES (ATUALIZAR)
-                if btn_col1.button("💾 Salvar Alterações", type="primary", use_container_width=True):
-                    try:
-                        dt_emissao_ed = pd.to_datetime(ed_data)
-                        dt_venc_ed = dt_emissao_ed + pd.DateOffset(months=int(ed_gar))
-                        v_total_item_ed = float(ed_qtd * ed_uni)
-                        
-                        df.at[idx_real_planilha, 'NF'] = str(ed_nf).strip()
-                        df.at[idx_real_planilha, 'data_emissao'] = ed_data.strftime('%Y-%m-%d')
-                        df.at[idx_real_planilha, 'valor_total_nf'] = float(ed_total_nf)
-                        df.at[idx_real_planilha, 'Item'] = ed_item
-                        df.at[idx_real_planilha, 'quantidade'] = int(ed_qtd)
-                        df.at[idx_real_planilha, 'valor_unitario'] = float(ed_uni)
-                        df.at[idx_real_planilha, 'valor_total_item'] = v_total_item_ed
-                        df.at[idx_real_planilha, 'Fornecedor'] = ed_forn
-                        df.at[idx_real_planilha, 'meses_garantia'] = int(ed_gar)
-                        df.at[idx_real_planilha, 'data_vencimento'] = dt_venc_ed.strftime('%Y-%m-%d')
-                        
-                        if 'Status' in df.columns: df = df.drop(columns=['Status'])
-                        if 'ID_Original' in df.columns: df = df.drop(columns=['ID_Original'])
-                        
-                        url_planilha = st.secrets["connections"]["gsheets"]["spreadsheet"]
-                        conn.update(spreadsheet=url_planilha, worksheet="Garantias", data=df)
-                        st.success("✅ Alteração gravada com sucesso!")
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"Erro ao atualizar: {e}")
-                
-                # AÇÃO 2: APAGAR REGISTRO (DELETAR) - NOVO RECURSO!
-                if btn_col2.button("❌ Apagar Registro Permanentemente", type="secondary", use_container_width=True):
-                    try:
-                        # Remove a linha selecionada do DataFrame principal usando o índice real
-                        df = df.drop(index=idx_real_planilha)
-                        
-                        # Limpa colunas geradas em tempo de execução antes de reenviar para a planilha
-                        if 'Status' in df.columns: df = df.drop(columns=['Status'])
-                        if 'ID_Original' in df.columns: df = df.drop(columns=['ID_Original'])
-                        
-                        url_planilha = st.secrets["connections"]["gsheets"]["spreadsheet"]
-                        conn.update(spreadsheet=url_planilha, worksheet="Garantias", data=df)
-                        st.success("🗑️ Registro apagado com sucesso do Google Sheets!")
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"Erro ao excluir o registro: {e}")
+                # Criando um Form do Streamlit para manter os dados fixos e preenchidos durante a edição
+                with st.form(key=f"form_edicao_{idx_real_planilha}"):
+                    st.write("✏️ *Modifique apenas os campos necessários:*")
+                    
+                    ed_c1, ed_c2, ed_c3, ed_c4 = st.columns([1, 1, 1, 1])
+                    # Parâmetro 'value=' agora puxa a informação original diretamente do banco
+                    ed_nf = ed_c1.text_input("Número da NF", value=str(registro_selecionado['NF']))
+                    ed_data = ed_c2.date_input("Data da Emissão", value=pd.to_datetime(registro_selecionado['data_emissao']).date(), format="DD/MM/YYYY")
+                    ed_forn = ed_c3.text_input("Fornecedor", value=str(registro_selecionado['Fornecedor']))
+                    ed_total_nf = ed_c4.number_input("Valor Total da NF (R$)", min_value=0.0, value=float(registro_selecionado['valor_total_nf']), step=10.0, format="%.2f")
+                    
+                    ed_ca, ed_cb, ed_cc, ed_cd = st.columns([2, 1, 1, 1])
+                    ed_item = ed_ca.text_input("Descrição do Item", value=str(registro_selecionado['Item']))
+                    ed_qtd = ed_cb.number_input("Quantidade", min_value=1, value=int(registro_selecionado['quantidade']))
+                    ed_uni = ed_cc.number_input("Valor Unitário (R$)", min_value=0.0, value=float(registro_selecionado['valor_unitario']), step=1.0, format="%.2f")
+                    ed_gar = ed_cd.number_input("Garantia (Meses)", min_value=1, value=int(registro_selecionado['meses_garantia']))
+                    
+                    st.write("")
+                    btn_col1, btn_col2 = st.columns([1, 1])
+                    
+                    # AÇÃO 1: SALVAR ALTERAÇÕES
+                    if btn_col1.form_submit_button("💾 Salvar Alterações", type="primary", use_container_width=True):
+                        try:
+                            dt_emissao_ed = pd.to_datetime(ed_data)
+                            dt_venc_ed = dt_emissao_ed + pd.DateOffset(months=int(ed_gar))
+                            v_total_item_ed = float(ed_qtd * ed_uni)
+                            
+                            df.at[idx_real_planilha, 'NF'] = str(ed_nf).strip()
+                            df.at[idx_real_planilha, 'data_emissao'] = ed_data.strftime('%Y-%m-%d')
+                            df.at[idx_real_planilha, 'valor_total_nf'] = float(ed_total_nf)
+                            df.at[idx_real_planilha, 'Item'] = ed_item
+                            df.at[idx_real_planilha, 'quantidade'] = int(ed_qtd)
+                            df.at[idx_real_planilha, 'valor_unitario'] = float(ed_uni)
+                            df.at[idx_real_planilha, 'valor_total_item'] = v_total_item_ed
+                            df.at[idx_real_planilha, 'Fornecedor'] = ed_forn
+                            df.at[idx_real_planilha, 'meses_garantia'] = int(ed_gar)
+                            df.at[idx_real_planilha, 'data_vencimento'] = dt_venc_ed.strftime('%Y-%m-%d')
+                            
+                            if 'Status' in df.columns: df = df.drop(columns=['Status'])
+                            if 'ID_Original' in df.columns: df = df.drop(columns=['ID_Original'])
+                            
+                            url_planilha = st.secrets["connections"]["gsheets"]["spreadsheet"]
+                            conn.update(spreadsheet=url_planilha, worksheet="Garantias", data=df)
+                            st.success("✅ Alteração gravada com sucesso!")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Erro ao atualizar: {e}")
+                    
+                    # AÇÃO 2: APAGAR REGISTRO
+                    if btn_col2.form_submit_button("❌ Apagar Registro Permanentemente", type="secondary", use_container_width=True):
+                        try:
+                            df = df.drop(index=idx_real_planilha)
+                            
+                            if 'Status' in df.columns: df = df.drop(columns=['Status'])
+                            if 'ID_Original' in df.columns: df = df.drop(columns=['ID_Original'])
+                            
+                            url_planilha = st.secrets["connections"]["gsheets"]["spreadsheet"]
+                            conn.update(spreadsheet=url_planilha, worksheet="Garantias", data=df)
+                            st.success("🗑️ Registro apagado com sucesso!")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Erro ao excluir o registro: {e}")
         else:
             st.warning("Nenhum registro correspondente encontrado na busca interna.")
                         
     st.caption(f"Exibindo {len(df_filtrado)} registros encontrados.")
 
-# --- ASSINATURA FINALIZADA COM FONTE GABRIOLA ---
+# --- ASSINATURA FINALIZADA (COMO AJUSTADO PELO EDISON) ---
 st.markdown("---")
 
 st.markdown(
     """
-    <div style='text-align: center; margin-top: 100px;'>
-        <p style='margin-bottom: -8px; font-family: "Gabriola", serif; font-style: italic; font-size: 18px; color: #0056b3;'>
+    <div style='text-align: center; margin-top: 50px;'>
+        <p style='margin-bottom: 2px; font-family: "Gabriola", serif; font-style: italic; font-size: 14px; color: #0056b3;'>
             Developed by:
         </p>
-        <p style='font-family: "Gabriola", serif; font-size: 20px; font-weight: 100; color: #1e7044;'>
+        <p style='margin-top: 0px; font-family: "Gabriola", serif; font-size: 18px; font-weight: bold; color: #1e7044;'>
             Edison Duarte Filho®
         </p>
     </div>
