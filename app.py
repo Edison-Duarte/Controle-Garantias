@@ -121,9 +121,9 @@ if not df.empty:
     
     df['Status'] = df['data_vencimento'].apply(definir_status)
 
-    # Filtros Avançados (NF, Material e Fornecedor unificados)
+    # Filtros Avançados (Relatório Principal)
     c_busca, c_status = st.columns([2, 1])
-    busca = c_busca.text_input("🔍 Filtrar por Material, Fornecedor ou Número da NF").lower().strip()
+    busca = c_busca.text_input("🔍 Filtrar relatório principal por Material, Fornecedor ou NF").lower().strip()
     status_opcoes = ["✅ ATIVA", "⚠️ VENCE EM BREVE", "❌ EXPIRADA", "⚪ SEM DATA"]
     status_selecionados = c_status.multiselect("Filtrar por Status", options=status_opcoes, default=status_opcoes)
 
@@ -136,9 +136,9 @@ if not df.empty:
     
     colunas_exibicao = ['NF', 'data_emissao', 'valor_total_nf', 'Item', 'quantidade', 'valor_unitario', 'valor_total_item', 'Fornecedor', 'meses_garantia', 'data_vencimento', 'Status']
     df_filtrado = df.loc[mask, [c for c in colunas_exibicao if c in df.columns]].copy()
-    df_filtrado['ID_Original'] = df_filtrado.index # Guarda o índice original para edição segura
+    df_filtrado['ID_Original'] = df_filtrado.index
 
-    # Métricas Dinâmicas baseadas nos filtros aplicados
+    # Métricas Dinâmicas
     total_gasto = df_filtrado['valor_total_item'].sum() if 'valor_total_item' in df_filtrado.columns else 0.0
     total_qtd = df_filtrado['quantidade'].sum() if 'quantidade' in df_filtrado.columns else 0
     
@@ -152,10 +152,7 @@ if not df.empty:
         if '✅' in str(val): return 'background-color: #e8f5e9; color: #1b5e20; font-weight: bold'
         return ''
 
-    # Método de edição alternativo (Altamente compatível com qualquer versão do Streamlit)
-    st.write("👉 *Para editar um item, use o menu lateral ou os filtros acima para identificá-lo.*")
-    
-    # Exibição segura dos dados
+    # Exibição segura dos dados do relatório principal
     st.dataframe(
         df_filtrado.style.map(style_status, subset=['Status']),
         use_container_width=True,
@@ -174,18 +171,38 @@ if not df.empty:
         }
     )
     
-    # --- NOVO PAINEL DE EDIÇÃO SEGURO DE CONFLITOS ---
-    if not df_filtrado.empty:
-        st.write("---")
-        lista_opcoes_edicao = {f"NF: {row['NF']} | Item: {row['Item']} (ID: {row['ID_Original']})": row['ID_Original'] for _, row in df_filtrado.iterrows()}
+    # --- PAINEL DE MODIFICAÇÃO DE REGISTROS (COM BUSCA INTERNA E EXCLUSÃO) ---
+    st.write("---")
+    with st.expander("✏️ Painel de Modificação de Registros (Editar ou Apagar)"):
         
-        with st.expander("✏️ Painel de Modificação de Registros"):
-            item_para_editar = st.selectbox("Selecione qual item filtrado deseja alterar:", options=list(lista_opcoes_edicao.keys()))
+        # Campo de busca interno do painel solicitado por você
+        busca_interna = st.text_input("🔍 Procurar nota para modificar por número, fornecedor ou item:", key="busca_painel").strip().lower()
+        
+        # Aplica o filtro interno com base na digitação
+        if busca_interna:
+            mask_interna = (
+                df['NF'].astype(str).str.contains(busca_interna, case=False) |
+                df['Fornecedor'].astype(str).str.contains(busca_interna, case=False) |
+                df['Item'].astype(str).str.contains(busca_interna, case=False)
+            )
+            df_opcoes = df[mask_interna]
+        else:
+            df_opcoes = df  # Se estiver vazio, mostra todas as opções da planilha
+
+        # Cria o dicionário mapeando os textos elegíveis para o ID real
+        lista_opcoes_edicao = {}
+        for idx, row in df_opcoes.iterrows():
+            texto_opcao = f"NF: {row['NF']} | Forn: {row['Fornecedor']} | Item: {row['Item']} (Ref: {idx})"
+            lista_opcoes_edicao[texto_opcao] = idx
+            
+        if lista_opcoes_edicao:
+            item_para_editar = st.selectbox("Selecione o registro encontrado desejado:", options=list(lista_opcoes_edicao.keys()))
             
             if item_para_editar:
                 idx_real_planilha = lista_opcoes_edicao[item_para_editar]
                 registro_selecionado = df.loc[idx_real_planilha]
                 
+                # Campos para Edição
                 ed_c1, ed_c2, ed_c3, ed_c4 = st.columns([1, 1, 1, 1])
                 ed_nf = ed_c1.text_input("Número da NF", value=str(registro_selecionado['NF']), key="ed_nf")
                 ed_data = ed_c2.date_input("Data da Emissão", value=pd.to_datetime(registro_selecionado['data_emissao']).date(), format="DD/MM/YYYY", key="ed_data")
@@ -198,7 +215,11 @@ if not df.empty:
                 ed_uni = ed_cc.number_input("Valor Unitário (R$)", min_value=0.0, value=float(registro_selecionado['valor_unitario']), step=1.0, format="%.2f", key="ed_uni")
                 ed_gar = ed_cd.number_input("Garantia (Meses)", min_value=1, value=int(registro_selecionado['meses_garantia']), key="ed_gar")
                 
-                if st.button("💾 Salvar Alterações", type="primary"):
+                st.write("")
+                btn_col1, btn_col2 = st.columns([1, 1])
+                
+                # AÇÃO 1: SALVAR ALTERAÇÕES (ATUALIZAR)
+                if btn_col1.button("💾 Salvar Alterações", type="primary", use_container_width=True):
                     try:
                         dt_emissao_ed = pd.to_datetime(ed_data)
                         dt_venc_ed = dt_emissao_ed + pd.DateOffset(months=int(ed_gar))
@@ -224,6 +245,25 @@ if not df.empty:
                         st.rerun()
                     except Exception as e:
                         st.error(f"Erro ao atualizar: {e}")
+                
+                # AÇÃO 2: APAGAR REGISTRO (DELETAR) - NOVO RECURSO!
+                if btn_col2.button("❌ Apagar Registro Permanentemente", type="secondary", use_container_width=True):
+                    try:
+                        # Remove a linha selecionada do DataFrame principal usando o índice real
+                        df = df.drop(index=idx_real_planilha)
+                        
+                        # Limpa colunas geradas em tempo de execução antes de reenviar para a planilha
+                        if 'Status' in df.columns: df = df.drop(columns=['Status'])
+                        if 'ID_Original' in df.columns: df = df.drop(columns=['ID_Original'])
+                        
+                        url_planilha = st.secrets["connections"]["gsheets"]["spreadsheet"]
+                        conn.update(spreadsheet=url_planilha, worksheet="Garantias", data=df)
+                        st.success("🗑️ Registro apagado com sucesso do Google Sheets!")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Erro ao excluir o registro: {e}")
+        else:
+            st.warning("Nenhum registro correspondente encontrado na busca interna.")
                         
     st.caption(f"Exibindo {len(df_filtrado)} registros encontrados.")
 
