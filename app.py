@@ -121,30 +121,42 @@ if not df.empty:
     
     df['Status'] = df['data_vencimento'].apply(definir_status)
 
-    # Filtros Avançados (Relatório Principal)
-    c_busca, c_status = st.columns([2, 1])
-    busca = c_busca.text_input("🔍 Filtrar relatório principal por Material, Fornecedor ou NF").lower().strip()
+    # --- NOVOS FILTROS MÚLTIPLOS INTELIGENTES ---
+    # Captura listas únicas de materiais, fornecedores e NFs cadastrados para alimentar os filtros
+    lista_materiais = sorted(df['Item'].dropna().unique().tolist())
+    lista_fornecedores = sorted(df['Fornecedor'].dropna().unique().tolist())
+    lista_nfs = sorted(df['NF'].dropna().unique().tolist())
     status_opcoes = ["✅ ATIVA", "⚠️ VENCE EM BREVE", "❌ EXPIRADA", "⚪ SEM DATA"]
-    status_selecionados = c_status.multiselect("Filtrar por Status", options=status_opcoes, default=status_opcoes)
 
-    mask = (
-        (df['Item'].astype(str).str.contains(busca, case=False) | 
-         df['Fornecedor'].astype(str).str.contains(busca, case=False) |
-         df['NF'].astype(str).str.contains(busca, case=False)) &
-        (df['Status'].isin(status_selecionados))
-    )
+    c_mat, c_forn, c_nf, c_stat = st.columns([1.5, 1.5, 1, 1])
+    
+    # Multiselects com opções dinâmicas da planilha
+    buscar_materiais = c_mat.multiselect("📦 Filtrar por Material(is)", options=lista_materiais, default=None, placeholder="Todos os materiais")
+    buscar_fornecedores = c_forn.multiselect("🏭 Filtrar por Fornecedor(es)", options=lista_fornecedores, default=None, placeholder="Todos os fornecedores")
+    buscar_nfs = c_nf.multiselect("🧾 Filtrar por Nota(s)", options=lista_nfs, default=None, placeholder="Todas as NFs")
+    status_selecionados = c_stat.multiselect("🛡️ Status da Garantia", options=status_opcoes, default=status_opcoes)
+
+    # Construção da lógica de filtro (Se a lista do filtro estiver vazia, ele considera "todos")
+    mask = df['Status'].isin(status_selecionados)
+    
+    if buscar_materiais:
+        mask = mask & (df['Item'].isin(buscar_materiais))
+    if buscar_fornecedores:
+        mask = mask & (df['Fornecedor'].isin(buscar_fornecedores))
+    if buscar_nfs:
+        mask = mask & (df['NF'].isin(buscar_nfs))
     
     colunas_exibicao = ['NF', 'data_emissao', 'valor_total_nf', 'Item', 'quantidade', 'valor_unitario', 'valor_total_item', 'Fornecedor', 'meses_garantia', 'data_vencimento', 'Status']
     df_filtrado = df.loc[mask, [c for c in colunas_exibicao if c in df.columns]].copy()
     df_filtrado['ID_Original'] = df_filtrado.index
 
-    # Métricas Dinâmicas
+    # Métricas Dinâmicas Multi-Filtro
     total_gasto = df_filtrado['valor_total_item'].sum() if 'valor_total_item' in df_filtrado.columns else 0.0
     total_qtd = df_filtrado['quantidade'].sum() if 'quantidade' in df_filtrado.columns else 0
     
     m1, m2 = st.columns(2)
-    m1.metric(label="💰 Total Gasto no Filtro Atual", value=f"R$ {total_gasto:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
-    m2.metric(label="📦 Quantidade Total de Itens", value=f"{total_qtd} un")
+    m1.metric(label="💰 Total Gasto Selecionado", value=f"R$ {total_gasto:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+    m2.metric(label="📦 Quantidade Total Acumulada", value=f"{total_qtd} un")
 
     def style_status(val):
         if '❌' in str(val): return 'background-color: #ffebee; color: #b71c1c; font-weight: bold'
@@ -152,7 +164,7 @@ if not df.empty:
         if '✅' in str(val): return 'background-color: #e8f5e9; color: #1b5e20; font-weight: bold'
         return ''
 
-    # Exibição dos dados do relatório principal
+    # Tabela principal
     st.dataframe(
         df_filtrado.style.map(style_status, subset=['Status']),
         use_container_width=True,
@@ -171,7 +183,7 @@ if not df.empty:
         }
     )
     
-    # --- PAINEL DE MODIFICAÇÃO DE REGISTROS (COM DADOS PREENCHIDOS AUTOMATICAMENTE) ---
+    # --- PAINEL DE MODIFICAÇÃO DE REGISTROS ---
     st.write("---")
     with st.expander("✏️ Painel de Modificação de Registros (Editar ou Apagar)"):
         
@@ -199,12 +211,10 @@ if not df.empty:
                 idx_real_planilha = lista_opcoes_edicao[item_para_editar]
                 registro_selecionado = df.loc[idx_real_planilha]
                 
-                # Criando um Form do Streamlit para manter os dados fixos e preenchidos durante a edição
                 with st.form(key=f"form_edicao_{idx_real_planilha}"):
                     st.write("✏️ *Modifique apenas os campos necessários:*")
                     
                     ed_c1, ed_c2, ed_c3, ed_c4 = st.columns([1, 1, 1, 1])
-                    # Parâmetro 'value=' agora puxa a informação original diretamente do banco
                     ed_nf = ed_c1.text_input("Número da NF", value=str(registro_selecionado['NF']))
                     ed_data = ed_c2.date_input("Data da Emissão", value=pd.to_datetime(registro_selecionado['data_emissao']).date(), format="DD/MM/YYYY")
                     ed_forn = ed_c3.text_input("Fornecedor", value=str(registro_selecionado['Fornecedor']))
@@ -219,7 +229,6 @@ if not df.empty:
                     st.write("")
                     btn_col1, btn_col2 = st.columns([1, 1])
                     
-                    # AÇÃO 1: SALVAR ALTERAÇÕES
                     if btn_col1.form_submit_button("💾 Salvar Alterações", type="primary", use_container_width=True):
                         try:
                             dt_emissao_ed = pd.to_datetime(ed_data)
@@ -247,7 +256,6 @@ if not df.empty:
                         except Exception as e:
                             st.error(f"Erro ao atualizar: {e}")
                     
-                    # AÇÃO 2: APAGAR REGISTRO
                     if btn_col2.form_submit_button("❌ Apagar Registro Permanentemente", type="secondary", use_container_width=True):
                         try:
                             df = df.drop(index=idx_real_planilha)
