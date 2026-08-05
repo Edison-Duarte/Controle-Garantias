@@ -1,3 +1,4 @@
 streamlit
 pandas
 st-gsheets-connection
+starlette<0.40.0
