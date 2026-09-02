@@ -231,7 +231,7 @@ if not df.empty:
     
     # --- PAINEL DE MODIFICAÇÃO DE REGISTROS ---
     st.write("---")
-    with st.expander("✏️ Painel de Modificação de Registros (Editar ou Apagar)"):
+    with st.expander("✏️ Painel de Modificação de Registros (Editar, Desconto ou Apagar)"):
         
         busca_interna = st.text_input("🔍 Procurar nota para modificar por número, fornecedor ou item:", key="busca_painel").strip()
         busca_interna_norm = normalizar_texto(busca_interna)
@@ -273,10 +273,18 @@ if not df.empty:
                     ed_uni = ed_cc.number_input("Valor Unitário (R$)", min_value=0.0, value=float(registro_selecionado['valor_unitario']), step=1.0, format="%.2f")
                     ed_gar = ed_cd.number_input("Garantia (Meses)", min_value=1, value=int(registro_selecionado['meses_garantia']))
                     
+                    # Campo de Abatimento/Desconto
+                    st.markdown("**🏷️ Aplicar Desconto / Abatimento de Valor**")
+                    desconto_val = st.number_input("Valor do Desconto a Abater no Item/NF (R$)", min_value=0.0, value=0.0, step=5.0, format="%.2f", help="Digite o valor a abater. O sistema atualizará o total do item e o total da NF.")
+
                     st.write("")
-                    btn_col1, btn_col2 = st.columns([1, 1])
+                    btn_col1, btn_col2, btn_col3 = st.columns([1.2, 1.2, 1])
                     
-                    if btn_col1.form_submit_button("💾 Salvar Alterações", type="primary", use_container_width=True):
+                    salvar_alteracao = btn_col1.form_submit_button("💾 Salvar Alterações", type="primary", use_container_width=True)
+                    aplicar_desconto = btn_col2.form_submit_button("🏷️ Aplicar Desconto", use_container_width=True)
+                    apagar_registro = btn_col3.form_submit_button("❌ Apagar Registro", type="secondary", use_container_width=True)
+
+                    if salvar_alteracao:
                         try:
                             dt_emissao_ed = pd.to_datetime(ed_data)
                             dt_venc_ed = dt_emissao_ed + pd.DateOffset(months=int(ed_gar))
@@ -302,8 +310,35 @@ if not df.empty:
                             st.rerun()
                         except Exception as e:
                             st.error(f"Erro ao atualizar: {e}")
+
+                    if aplicar_desconto:
+                        if desconto_val <= 0:
+                            st.warning("Informe um valor de desconto maior que zero.")
+                        else:
+                            try:
+                                v_item_atual = float(registro_selecionado['valor_total_item'])
+                                v_nf_atual = float(registro_selecionado['valor_total_nf'])
+                                qtd_atual = max(1, int(ed_qtd))
+
+                                novo_v_item = max(0.0, v_item_atual - desconto_val)
+                                novo_v_nf = max(0.0, v_nf_atual - desconto_val)
+                                novo_v_unitario = round(novo_v_item / qtd_atual, 2)
+
+                                df.at[idx_real_planilha, 'valor_total_item'] = novo_v_item
+                                df.at[idx_real_planilha, 'valor_total_nf'] = novo_v_nf
+                                df.at[idx_real_planilha, 'valor_unitario'] = novo_v_unitario
+
+                                if 'Status' in df.columns: df = df.drop(columns=['Status'])
+                                if 'ID_Original' in df.columns: df = df.drop(columns=['ID_Original'])
+
+                                url_planilha = st.secrets["connections"]["gsheets"]["spreadsheet"]
+                                conn.update(spreadsheet=url_planilha, worksheet="Garantias", data=df)
+                                st.success(f"🏷️ Desconto de R$ {desconto_val:.2f} aplicado com sucesso!")
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"Erro ao aplicar desconto: {e}")
                     
-                    if btn_col2.form_submit_button("❌ Apagar Registro Permanentemente", type="secondary", use_container_width=True):
+                    if apagar_registro:
                         try:
                             df = df.drop(index=idx_real_planilha)
                             
