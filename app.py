@@ -164,9 +164,12 @@ if not df.empty:
     # --- LÓGICA DE FILTRAGEM COMBINADA ---
     mask = df['Status'].isin(status_selecionados)
     
+    # Garantir conversão explícita da coluna de emissão para datetime.date durante a filtragem
+    df_datas_emissao = pd.to_datetime(df['data_emissao'], errors='coerce').dt.date
+
     # Aplicar Filtro de Período (Data de Emissão)
     if dt_inicio and dt_fim:
-        mask = mask & (df['data_emissao'] >= dt_inicio) & (df['data_emissao'] <= dt_fim)
+        mask = mask & (df_datas_emissao >= dt_inicio) & (df_datas_emissao <= dt_fim)
 
     # Aplicar Filtro da Barra de Pesquisa Rápida (caso digite algo)
     if busca_rapida_norm:
