@@ -248,7 +248,9 @@ if not df.empty:
 
         lista_opcoes_edicao = {}
         for idx, row in df_opcoes.iterrows():
-            texto_opcao = f"NF: {row['NF']} | Forn: {row['Fornecedor']} | Item: {row['Item']} (Ref: {idx})"
+            # Exibe o valor do item atualizado no menu dropdown
+            v_item_str = f"R$ {float(row['valor_total_item']):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+            texto_opcao = f"NF: {row['NF']} | Forn: {row['Fornecedor']} | Item: {row['Item']} ({v_item_str}) (Ref: {idx})"
             lista_opcoes_edicao[texto_opcao] = idx
             
         if lista_opcoes_edicao:
@@ -256,6 +258,7 @@ if not df.empty:
             
             if item_para_editar:
                 idx_real_planilha = lista_opcoes_edicao[item_para_editar]
+                # Leitura direta do DataFrame atualizado
                 registro_selecionado = df.loc[idx_real_planilha]
                 
                 with st.form(key=f"form_edicao_{idx_real_planilha}"):
