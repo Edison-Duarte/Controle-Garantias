@@ -133,9 +133,20 @@ if not df.empty:
     
     df['Status'] = df['data_vencimento'].apply(definir_status)
 
-    # 1. BARRA DE PESQUISA GLOBAL (Ignora acentos, maiúsculas e pontuação perfeitamente)
-    busca_rapida = st.text_input("🔍 Busca Rápida:", placeholder="Digita qualquer termo para filtrar a tabela inteira...").strip()
+    # 1. BARRA DE PESQUISA GLOBAL (Ignora acentos, maiúsculas e pontuação)
+    busca_rapida = st.text_input("🔍 Busca Rápida Avançada (Pode digitar sem acentos, ex: 'lampada', 'luminaria', 'fornecedor'):", placeholder="Digite qualquer termo para filtrar a tabela inteira...").strip()
     busca_rapida_norm = normalizar_texto(busca_rapida)
+
+    # 2. FILTRO POR PERÍODO DE EMISSÃO DA NF
+    col_dt1, col_dt2 = st.columns(2)
+    
+    # Determinar datas padrão com base na planilha
+    datas_validas = [d for d in df['data_emissao'].dropna() if isinstance(d, date)]
+    dt_min_def = min(datas_validas) if datas_validas else date(2020, 1, 1)
+    dt_max_def = max(datas_validas) if datas_validas else date.today()
+
+    dt_inicio = col_dt1.date_input("📅 Data Inicial (Emissão NF)", value=dt_min_def, format="DD/MM/YYYY", key="filtro_dt_inicio")
+    dt_fim = col_dt2.date_input("📅 Data Final (Emissão NF)", value=dt_max_def, format="DD/MM/YYYY", key="filtro_dt_fim")
 
     # Captura listas únicas originais para os filtros complementares
     lista_materiais = sorted(df['Item'].dropna().unique().tolist())
@@ -153,7 +164,11 @@ if not df.empty:
     # --- LÓGICA DE FILTRAGEM COMBINADA ---
     mask = df['Status'].isin(status_selecionados)
     
-    # Aplicar Filtro da Barra de Pesquisa Rápida (caso o utilizador digite algo)
+    # Aplicar Filtro de Período (Data de Emissão)
+    if dt_inicio and dt_fim:
+        mask = mask & (df['data_emissao'] >= dt_inicio) & (df['data_emissao'] <= dt_fim)
+
+    # Aplicar Filtro da Barra de Pesquisa Rápida (caso digite algo)
     if busca_rapida_norm:
         mask = mask & (
             df['Item'].apply(normalizar_texto).str.contains(busca_rapida_norm, case=False, na=False) |
@@ -161,7 +176,7 @@ if not df.empty:
             df['NF'].apply(normalizar_texto).str.contains(busca_rapida_norm, case=False, na=False)
         )
 
-    # Aplicar Filtros dos Menus de Seleção Múltipla (se forem utilizados)
+    # Aplicar Filtros dos Menus de Seleção Múltipla
     if buscar_materiais:
         materiais_norm = [normalizar_texto(m) for m in buscar_materiais]
         mask = mask & (df['Item'].apply(normalizar_texto).isin(materiais_norm))
@@ -303,18 +318,18 @@ if not df.empty:
                         
     st.caption(f"Exibindo {len(df_filtrado)} registros encontrados.")
 
-# --- ASSINATURA FINALIZADA COM FONTE GABRIOLA ---
+# --- ASSINATURA ---
 st.markdown("---")
 
 st.markdown(
     """
-    <div style='text-align: center; margin-top: 100px;'>
-        <p style='margin-bottom: -8px; font-family: "Gabriola", serif; font-style: italic; font-size: 18px; color: #0056b3;'>
+    <div style='text-align: center; margin-top: 40px; padding-bottom: 20px;'>
+        <div style='font-family: "Gabriola", serif; font-style: italic; font-size: 18px; color: #0056b3; line-height: 1.2;'>
             Developed by:
-        </p>
-        <p style='font-family: "Gabriola", serif; font-size: 20px; font-weight: 100; color: #1e7044;'>
+        </div>
+        <div style='font-family: "Gabriola", serif; font-size: 22px; font-weight: bold; color: #1e7044; line-height: 1.2; margin-top: 4px;'>
             Edison Duarte Filho®
-        </p>
+        </div>
     </div>
     """,
     unsafe_allow_html=True
