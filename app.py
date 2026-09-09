@@ -56,7 +56,7 @@ def carregar_dados():
 df_existente = carregar_dados()
 
 # -----------------------------------------------------------------------------
-# 3. FUNÇÃO DE LEITURA DE NF VIA GEMINI API (RETRY ROBUSTO & MODELO ESTÁVEL)
+# 3. FUNÇÃO DE LEITURA DE NF VIA GEMINI API (RETRY ROBUSTO & MODELO ATUALIZADO)
 # -----------------------------------------------------------------------------
 def processar_nota_fiscal(arquivo_bytes, mime_type):
     api_key = st.secrets.get("GEMINI_API_KEY")
@@ -99,7 +99,7 @@ def processar_nota_fiscal(arquivo_bytes, mime_type):
     for tentativa in range(1, max_tentativas + 1):
         try:
             response = client.models.generate_content(
-                model='gemini-2.5-flash',
+                model='gemini-3.6-flash',
                 contents=[
                     types.Part.from_bytes(data=arquivo_bytes, mime_type=mime_type),
                     prompt
@@ -111,7 +111,7 @@ def processar_nota_fiscal(arquivo_bytes, mime_type):
             return json.loads(response.text)
         except Exception as e:
             msg_erro = str(e).upper()
-            if ("503" in msg_erro or "UNAVAILABLE" in msg_erro or "RESOURCE_EXHAUSTED" in msg_erro) and tentativa < max_tentativas:
+            if ("503" in msg_erro or "UNAVAILABLE" in msg_erro or "RESOURCE_EXHAUSTED" in msg_erro or "429" in msg_erro) and tentativa < max_tentativas:
                 time.sleep(tempo_espera)
                 tempo_espera *= 2
                 continue
@@ -207,7 +207,7 @@ with st.expander("🤖 Leitura Automática de NF por PDF ou Foto (IA)", expanded
 
                     except Exception as e:
                         msg_e = str(e).upper()
-                        if "503" in msg_e or "UNAVAILABLE" in msg_e or "RESOURCE_EXHAUSTED" in msg_e:
+                        if "503" in msg_e or "UNAVAILABLE" in msg_e or "RESOURCE_EXHAUSTED" in msg_e or "429" in msg_e:
                             st.warning("⚠️ O serviço do Gemini está temporariamente sobrecarregado. Aguarde alguns instantes e tente novamente.")
                         else:
                             st.error(f"Erro no processamento da nota: {e}")
