@@ -93,7 +93,7 @@ def processar_nota_fiscal(arquivo_bytes, mime_type):
     """
 
     response = client.models.generate_content(
-        model='gemini-2.5-flash',
+        model='gemini-3.6-flash',
         contents=[
             types.Part.from_bytes(data=arquivo_bytes, mime_type=mime_type),
             prompt
@@ -120,14 +120,12 @@ with st.expander("🤖 Leitura Automática de NF por PDF ou Foto (IA)", expanded
     col_up1, col_up2 = st.columns([1, 1], gap="medium")
     
     with col_up1:
-        # Adicionado suporte a "pdf" no type
         arquivo_enviado = st.file_uploader("Selecione o arquivo (PDF, JPG, PNG)", type=["pdf", "jpg", "jpeg", "png"], key="ia_uploader")
         
         if arquivo_enviado:
             nome_arquivo = arquivo_enviado.name.lower()
             bytes_data = arquivo_enviado.getvalue()
             
-            # Identificação do MIME TYPE correto
             if nome_arquivo.endswith(".pdf"):
                 mime_type = "application/pdf"
                 st.info(f"📄 Arquivo PDF carregado: **{arquivo_enviado.name}**")
@@ -142,7 +140,6 @@ with st.expander("🤖 Leitura Automática de NF por PDF ou Foto (IA)", expanded
                     try:
                         dados = processar_nota_fiscal(bytes_data, mime_type)
 
-                        # Adiciona automaticamente os itens lidos para a lista temporária do sistema
                         nf_num = str(dados.get("numero_nota", "")).strip()
                         dt_emissao_str = dados.get("data_emissao", date.today().strftime('%Y-%m-%d'))
                         
@@ -155,7 +152,7 @@ with st.expander("🤖 Leitura Automática de NF por PDF ou Foto (IA)", expanded
                         v_total_nf = float(dados.get("valor_total", 0.0))
 
                         itens_lidos = dados.get("itens", [])
-                        garantia_padrao = 12 # Meses de garantia padrão
+                        garantia_padrao = 12
 
                         for it in itens_lidos:
                             desc = it.get("descricao", "Item Sem Nome")
@@ -225,7 +222,6 @@ with st.expander("📝 Cadastrar / Revisar Itens para Salvar", expanded=True if 
         else:
             st.error("Preencha o número da NF e a Descrição do Item.")
 
-    # Exibe a lista acumulada (seja da IA ou manual)
     if st.session_state.lista_itens:
         st.write("---")
         st.subheader("📋 Itens Prontos para Gravação")
@@ -271,11 +267,9 @@ if not df.empty:
     
     df['Status'] = df['data_vencimento'].apply(definir_status)
 
-    # 1. BARRA DE PESQUISA GLOBAL
     busca_rapida = st.text_input("🔍 Busca Rápida Avançada (Pode digitar sem acentos, ex: 'lampada', 'luminaria', 'fornecedor'):", placeholder="Digite qualquer termo para filtrar a tabela inteira...").strip()
     busca_rapida_norm = normalizar_texto(busca_rapida)
 
-    # 2. FILTRO POR PERÍODO DE EMISSÃO DA NF
     col_dt1, col_dt2 = st.columns(2)
     datas_validas = [d for d in df['data_emissao'].dropna() if isinstance(d, date)]
     dt_min_def = min(datas_validas) if datas_validas else date(2020, 1, 1)
@@ -295,7 +289,6 @@ if not df.empty:
     buscar_nfs = c_nf.multiselect("🧾 Filtrar por Nota(s)", options=lista_nfs, default=None, placeholder="Todas as NFs")
     status_selecionados = c_stat.multiselect("🛡️ Status da Garantia", options=status_opcoes, default=status_opcoes)
 
-    # Filtragem combinada
     mask = df['Status'].isin(status_selecionados)
     df_datas_emissao = pd.to_datetime(df['data_emissao'], errors='coerce').dt.date
 
@@ -325,7 +318,6 @@ if not df.empty:
     df_filtrado = df.loc[mask, [c for c in colunas_exibicao if c in df.columns]].copy()
     df_filtrado['ID_Original'] = df_filtrado.index
 
-    # Métricas Dinâmicas
     total_gasto = df_filtrado['valor_total_item'].sum() if 'valor_total_item' in df_filtrado.columns else 0.0
     total_qtd = df_filtrado['quantidade'].sum() if 'quantidade' in df_filtrado.columns else 0
     
