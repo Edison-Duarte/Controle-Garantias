@@ -55,12 +55,11 @@ def carregar_dados():
 df_existente = carregar_dados()
 
 # -----------------------------------------------------------------------------
-# 3. FUNÇÃO DE LEITURA DE NF VIA GEMINI API
+# 3. FUNÇÃO DE LEITURA DE NF VIA GEMINI API (SUPORTE A IMAGENS E PDF)
 # -----------------------------------------------------------------------------
-def processar_nota_fiscal(imagem_bytes, mime_type):
+def processar_nota_fiscal(arquivo_bytes, mime_type):
     api_key = st.secrets.get("GEMINI_API_KEY")
     if not api_key:
-        # Tenta buscar nas conexões caso esteja dentro de outra chave de secrets
         api_key = st.secrets.get("connections", {}).get("gsheets", {}).get("GEMINI_API_KEY")
     
     if not api_key:
@@ -69,7 +68,7 @@ def processar_nota_fiscal(imagem_bytes, mime_type):
     client = genai.Client(api_key=api_key)
 
     prompt = """
-    Analise esta imagem/documento de Nota Fiscal (NFe, NFCe, DANFE ou Cupom Fiscal) e extraia exatamente as informações abaixo no formato JSON.
+    Analise esta imagem ou documento PDF de Nota Fiscal (NFe, NFCe, DANFE ou Cupom Fiscal) e extraia exatamente as informações abaixo no formato JSON.
 
     Estrutura JSON obrigatória:
     {
@@ -96,7 +95,7 @@ def processar_nota_fiscal(imagem_bytes, mime_type):
     response = client.models.generate_content(
         model='gemini-2.5-flash',
         contents=[
-            types.Part.from_bytes(data=imagem_bytes, mime_type=mime_type),
+            types.Part.from_bytes(data=arquivo_bytes, mime_type=mime_type),
             prompt
         ],
         config=types.GenerateContentConfig(
@@ -113,28 +112,34 @@ if 'lista_itens' not in st.session_state:
     st.session_state.lista_itens = []
 
 # -----------------------------------------------------------------------------
-# 5. NOVO EXPANDER: LEITURA AUTOMÁTICA POR IA (GEMINI)
+# 5. EXPANDER: LEITURA AUTOMÁTICA POR IA (PDF / IMAGEM)
 # -----------------------------------------------------------------------------
-with st.expander("🤖 Leitura Automática de NF por Foto (IA)", expanded=False):
-    st.write("Suba a foto da Nota Fiscal ou Cupom para extrair os dados e itens automaticamente.")
+with st.expander("🤖 Leitura Automática de NF por PDF ou Foto (IA)", expanded=False):
+    st.write("Suba o arquivo **PDF** ou a foto (JPG, PNG) da Nota Fiscal para extrair os dados automaticamente.")
     
     col_up1, col_up2 = st.columns([1, 1], gap="medium")
     
     with col_up1:
-        arquivo_enviado = st.file_uploader("Selecione a Imagem (JPG, PNG)", type=["jpg", "jpeg", "png"], key="ia_uploader")
+        # Adicionado suporte a "pdf" no type
+        arquivo_enviado = st.file_uploader("Selecione o arquivo (PDF, JPG, PNG)", type=["pdf", "jpg", "jpeg", "png"], key="ia_uploader")
+        
         if arquivo_enviado:
-            imagem = Image.open(arquivo_enviado)
-            st.image(imagem, caption="Nota Carregada", use_container_width=True)
+            nome_arquivo = arquivo_enviado.name.lower()
+            bytes_data = arquivo_enviado.getvalue()
+            
+            # Identificação do MIME TYPE correto
+            if nome_arquivo.endswith(".pdf"):
+                mime_type = "application/pdf"
+                st.info(f"📄 Arquivo PDF carregado: **{arquivo_enviado.name}**")
+            else:
+                imagem = Image.open(arquivo_enviado)
+                st.image(imagem, caption="Nota Carregada", use_container_width=True)
+                fmt = imagem.format if imagem.format else "PNG"
+                mime_type = f"image/{fmt.lower()}"
             
             if st.button("🚀 Extrair Dados da Nota", type="primary"):
-                with st.spinner("O Gemini está analisando a imagem..."):
+                with st.spinner("O Gemini está analisando o documento..."):
                     try:
-                        img_byte_arr = io.BytesIO()
-                        fmt = imagem.format if imagem.format else "PNG"
-                        imagem.save(img_byte_arr, format=fmt)
-                        bytes_data = img_byte_arr.getvalue()
-                        mime_type = f"image/{fmt.lower()}"
-
                         dados = processar_nota_fiscal(bytes_data, mime_type)
 
                         # Adiciona automaticamente os itens lidos para a lista temporária do sistema
