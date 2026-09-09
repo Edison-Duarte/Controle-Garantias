@@ -5,7 +5,6 @@ from datetime import date, datetime
 import unicodedata
 import re
 import json
-import io
 import time
 from PIL import Image
 from pydantic import BaseModel, Field
@@ -29,14 +28,30 @@ class ItemNota(BaseModel):
     valor_total_item: float = Field(default=0.0, description="Valor total do item em R$")
 
 class NotaFiscal(BaseModel):
-    numero_nota: str = Field(description="Número ou identificador da Nota Fiscal/Cupom")
-    data_emissao: str = Field(description="Data de emissão no formato YYYY-MM-DD")
-    fornecedor_nome: str = Field(description="Nome do fornecedor, emissor ou razão social")
+    numero_nota: str = Field(default="", description="Número, série ou identificador da Nota Fiscal/Cupom Fiscal")
+    data_emissao: str = Field(default="", description="Data de emissão no formato YYYY-MM-DD")
+    fornecedor_nome: str = Field(default="", description="Nome do fornecedor, emissor ou razão social")
     valor_total: float = Field(default=0.0, description="Valor total geral da nota fiscal em R$")
     itens: List[ItemNota] = Field(default_factory=list, description="Lista de itens presentes na nota")
 
 # -----------------------------------------------------------------------------
-# 3. CONEXÃO COM GOOGLE SHEETS E FUNÇÕES AUXILIARES
+# 3. INITIALIZAÇÃO DO ESTADO GLOBAL (SESSION STATE)
+# -----------------------------------------------------------------------------
+if 'lista_itens' not in st.session_state:
+    st.session_state.lista_itens = []
+
+# Inicialização das chaves do formulário de cadastro/revisão
+if 'cad_nf' not in st.session_state:
+    st.session_state.cad_nf = ""
+if 'cad_data' not in st.session_state:
+    st.session_state.cad_data = date.today()
+if 'cad_forn' not in st.session_state:
+    st.session_state.cad_forn = ""
+if 'cad_val_nf' not in st.session_state:
+    st.session_state.cad_val_nf = 0.0
+
+# -----------------------------------------------------------------------------
+# 4. CONEXÃO COM GOOGLE SHEETS E FUNÇÕES AUXILIARES
 # -----------------------------------------------------------------------------
 conn = st.connection("gsheets", type=GSheetsConnection)
 
@@ -74,7 +89,7 @@ def carregar_dados():
 df_existente = carregar_dados()
 
 # -----------------------------------------------------------------------------
-# 4. FUNÇÃO DE LEITURA DE NF VIA GEMINI API (SCHEMA ESTRITO + RETRY)
+# 5. FUNÇÃO DE LEITURA DE NF VIA GEMINI API
 # -----------------------------------------------------------------------------
 def processar_nota_fiscal(arquivo_bytes, mime_type):
     api_key = st.secrets.get("GEMINI_API_KEY")
@@ -87,28 +102,29 @@ def processar_nota_fiscal(arquivo_bytes, mime_type):
     client = genai.Client(api_key=api_key)
 
     prompt = """
-    Analise com extrema precisão esta Nota Fiscal (NFe, NFCe, DANFE ou Cupom Fiscal) e extraia:
-    1. O número do documento/nota.
-    2. A data exata de emissão (no formato YYYY-MM-DD).
-    3. O nome completo ou razão social do fornecedor/emissor.
-    4. O valor total geral da nota fiscal.
-    5. A lista detalhada de todos os itens/produtos comprados com quantidade, valor unitário e total.
+    Analise esta Nota Fiscal/Cupom Fiscal/DANFE com atenção total aos dados do CABEÇALHO e DOS ITENS:
+    - Identifique o Número do Documento / Nota Fiscal (ex: Número, NF, Nº, Doc).
+    - Identifique a Data de Emissão (converta para o formato YYYY-MM-DD).
+    - Identifique a Razão Social ou Nome Fantasia do Fornecedor/Emissor.
+    - Identifique o Valor Total Geral do Documento (R$).
+    - Identifique cada item/produto individual da lista com descrição, quantidade, valor unitário e valor total.
     """
 
-    max_tentativas = 5
+    max_tentativas = 3
     tempo_espera = 2
 
     for tentativa in range(1, max_tentativas + 1):
         try:
             response = client.models.generate_content(
-                model='gemini-3.6-flash',
+                model='gemini-2.5-flash',
                 contents=[
                     types.Part.from_bytes(data=arquivo_bytes, mime_type=mime_type),
                     prompt
                 ],
                 config=types.GenerateContentConfig(
                     response_mime_type="application/json",
-                    response_schema=NotaFiscal
+                    response_schema=NotaFiscal,
+                    temperature=0.1
                 )
             )
             return json.loads(response.text)
@@ -121,25 +137,10 @@ def processar_nota_fiscal(arquivo_bytes, mime_type):
             raise e
 
 # -----------------------------------------------------------------------------
-# 5. ESTADO DA SESSÃO (INICIALIZAÇÃO DAS VARIÁVEIS DO FORMULÁRIO)
-# -----------------------------------------------------------------------------
-if 'lista_itens' not in st.session_state:
-    st.session_state.lista_itens = []
-
-if 'auto_nf' not in st.session_state:
-    st.session_state.auto_nf = ""
-if 'auto_data_emissao' not in st.session_state:
-    st.session_state.auto_data_emissao = date.today()
-if 'auto_fornecedor' not in st.session_state:
-    st.session_state.auto_fornecedor = ""
-if 'auto_valor_total_nf' not in st.session_state:
-    st.session_state.auto_valor_total_nf = 0.0
-
-# -----------------------------------------------------------------------------
 # 6. EXPANDER: LEITURA AUTOMÁTICA POR IA (PDF / IMAGEM)
 # -----------------------------------------------------------------------------
-with st.expander("🤖 Leitura Automática de NF por PDF ou Foto (IA)", expanded=False):
-    st.write("Suba o arquivo **PDF** ou a foto (JPG, PNG) da Nota Fiscal para extrair os dados automaticamente.")
+with st.expander("🤖 Leitura Automática de NF por PDF ou Foto (IA)", expanded=True):
+    st.write("Suba o arquivo **PDF** ou a foto (JPG, PNG) da Nota Fiscal para extrair todos os dados automaticamente.")
     
     col_up1, col_up2 = st.columns([1, 1], gap="medium")
     
@@ -160,40 +161,63 @@ with st.expander("🤖 Leitura Automática de NF por PDF ou Foto (IA)", expanded
                 mime_type = f"image/{fmt.lower()}"
             
             if st.button("🚀 Extrair Dados da Nota", type="primary"):
-                with st.spinner("O Gemini está analisando o documento..."):
+                with st.spinner("O Gemini está lendo o documento e extraindo o cabeçalho + itens..."):
                     try:
                         dados = processar_nota_fiscal(bytes_data, mime_type)
 
-                        # Extração dos dados do cabeçalho
-                        nf_num = str(dados.get("numero_nota", "")).strip()
-                        dt_emissao_str = dados.get("data_emissao", "")
-                        
+                        # Tratamento seguro do Número da NF
+                        raw_nf = str(dados.get("numero_nota", "")).strip()
+                        nf_num = raw_nf if raw_nf and raw_nf.lower() != "null" else "S/N"
+
+                        # Tratamento seguro do Fornecedor
+                        raw_forn = str(dados.get("fornecedor_nome", "")).strip()
+                        forn = raw_forn if raw_forn and raw_forn.lower() != "null" else "Fornecedor Não Identificado"
+
+                        # Tratamento seguro da Data de Emissão
+                        dt_emissao_str = str(dados.get("data_emissao", "")).strip()
                         try:
                             dt_emissao_obj = datetime.strptime(dt_emissao_str, '%Y-%m-%d').date()
                         except:
                             dt_emissao_obj = date.today()
 
-                        forn = str(dados.get("fornecedor_nome", "")).strip()
-                        v_total_nf = float(dados.get("valor_total", 0.0))
+                        # Tratamento seguro do Valor Total
+                        try:
+                            v_total_nf = float(dados.get("valor_total", 0.0))
+                        except:
+                            v_total_nf = 0.0
 
-                        # Grava o cabeçalho no estado global da sessão
-                        st.session_state.auto_nf = nf_num
-                        st.session_state.auto_data_emissao = dt_emissao_obj
-                        st.session_state.auto_fornecedor = forn
-                        st.session_state.auto_valor_total_nf = v_total_nf
+                        # ATUALIZAÇÃO DIRETA NO SESSION STATE (FORÇA OS INPUTS VISUAIS A SE ATUALIZAREM)
+                        st.session_state.cad_nf = nf_num
+                        st.session_state.cad_data = dt_emissao_obj
+                        st.session_state.cad_forn = forn
+                        st.session_state.cad_val_nf = v_total_nf
 
-                        # Limpa itens anteriores para evitar duplicidade na reextração
+                        # Limpa a lista para receber os itens da nova nota
                         st.session_state.lista_itens = []
 
                         itens_lidos = dados.get("itens", [])
                         garantia_padrao = 12
 
                         for it in itens_lidos:
-                            desc = it.get("descricao", "Item Sem Nome")
-                            qtd = int(it.get("quantidade", 1)) if it.get("quantidade", 1) > 0 else 1
-                            v_unit = float(it.get("valor_unitario", 0.0))
-                            v_tot_item = float(it.get("valor_total_item", qtd * v_unit))
+                            desc = str(it.get("descricao", "Item Sem Nome")).strip()
+                            try:
+                                qtd = int(float(it.get("quantidade", 1)))
+                                if qtd <= 0: qtd = 1
+                            except:
+                                qtd = 1
                             
+                            try:
+                                v_unit = float(it.get("valor_unitario", 0.0))
+                            except:
+                                v_unit = 0.0
+
+                            try:
+                                v_tot_item = float(it.get("valor_total_item", 0.0))
+                                if v_tot_item == 0.0 and v_unit > 0:
+                                    v_tot_item = round(qtd * v_unit, 2)
+                            except:
+                                v_tot_item = round(qtd * v_unit, 2)
+
                             dt_venc = pd.to_datetime(dt_emissao_obj) + pd.DateOffset(months=garantia_padrao)
 
                             st.session_state.lista_itens.append({
@@ -209,7 +233,7 @@ with st.expander("🤖 Leitura Automática de NF por PDF ou Foto (IA)", expanded
                                 "data_vencimento": dt_venc.strftime('%Y-%m-%d')
                             })
 
-                        st.success(f"✅ NF Nº {nf_num if nf_num else 'S/N'} ({forn}) lida com sucesso! {len(itens_lidos)} item(ns) identificados.")
+                        st.success(f"✅ Sucesso! Extraído: NF Nº **{nf_num}** | Fornecedor: **{forn}** | Valor Total: **R$ {v_total_nf:,.2f}** | Itens: **{len(itens_lidos)}**")
                         st.rerun()
 
                     except Exception as e:
@@ -222,16 +246,18 @@ with st.expander("🤖 Leitura Automática de NF por PDF ou Foto (IA)", expanded
 # -----------------------------------------------------------------------------
 # 7. FORMULÁRIO DE CADASTRO MANUAL OU REVISÃO DA IA
 # -----------------------------------------------------------------------------
-with st.expander("📝 Cadastrar / Revisar Itens para Salvar", expanded=True if (st.session_state.lista_itens or st.session_state.auto_nf) else False):
-    st.markdown("#### Adicionar Item Manualmente / Revisar Cabeçalho")
-    c1, c2, c3, c4 = st.columns([1, 1, 1, 1])
+with st.expander("📝 Cadastrar / Revisar Itens para Salvar", expanded=True if (st.session_state.lista_itens or st.session_state.cad_nf) else False):
+    st.markdown("#### Cabeçalho da Nota Fiscal")
+    c1, c2, c3, c4 = st.columns([1, 1, 1.5, 1])
     
-    nf_comum = c1.text_input("Número da NF", value=st.session_state.auto_nf, key="cad_nf")
-    data_emissao_comum = c2.date_input("Data da Emissão", value=st.session_state.auto_data_emissao, format="DD/MM/YYYY", key="cad_data")
-    fornecedor_comum = c3.text_input("Fornecedor", value=st.session_state.auto_fornecedor, key="cad_forn")
-    valor_total_nf_comum = c4.number_input("Valor Total da NF (R$)", min_value=0.0, value=st.session_state.auto_valor_total_nf, step=10.0, format="%.2f", key="cad_val_nf")
+    # Vinculamos diretamente a chave do session_state via key="cad_..."
+    nf_comum = c1.text_input("Número da NF", key="cad_nf")
+    data_emissao_comum = c2.date_input("Data da Emissão", format="DD/MM/YYYY", key="cad_data")
+    fornecedor_comum = c3.text_input("Fornecedor", key="cad_forn")
+    valor_total_nf_comum = c4.number_input("Valor Total da NF (R$)", min_value=0.0, step=10.0, format="%.2f", key="cad_val_nf")
 
     st.divider()
+    st.markdown("#### Adicionar / Revisar Itens da Nota")
     
     ca, cb, cc, cd = st.columns([2, 1, 1, 1])
     item_nome = ca.text_input("Descrição do Item / Material", key="cad_item")
@@ -239,7 +265,7 @@ with st.expander("📝 Cadastrar / Revisar Itens para Salvar", expanded=True if 
     item_valor_uni = cc.number_input("Valor Unitário (R$)", min_value=0.0, value=0.0, step=1.0, format="%.2f", key="cad_val_uni")
     item_garantia = cd.number_input("Garantia (Meses)", min_value=1, value=12, key="cad_gar")
     
-    if st.button("➕ Adicionar à Lista Manualmente"):
+    if st.button("➕ Adicionar Item à Lista Manualmente"):
         if item_nome and nf_comum:
             dt_emissao = pd.to_datetime(data_emissao_comum)
             dt_venc = dt_emissao + pd.DateOffset(months=int(item_garantia))
@@ -258,22 +284,31 @@ with st.expander("📝 Cadastrar / Revisar Itens para Salvar", expanded=True if 
                 "data_vencimento": dt_venc.strftime('%Y-%m-%d')
             })
             st.toast(f"Item '{item_nome}' adicionado!")
+            st.rerun()
         else:
             st.error("Preencha o número da NF e a Descrição do Item.")
 
     if st.session_state.lista_itens:
         st.write("---")
-        st.subheader("📋 Itens Prontos para Gravação")
+        st.subheader("📋 Itens Extraídos Prontos para Gravação")
+        
+        # Sincroniza cabeçalho caso o usuário altere os campos no topo antes de salvar
+        for item in st.session_state.lista_itens:
+            item["NF"] = str(st.session_state.cad_nf).strip()
+            item["data_emissao"] = st.session_state.cad_data.strftime('%Y-%m-%d')
+            item["Fornecedor"] = st.session_state.cad_forn
+            item["valor_total_nf"] = float(st.session_state.cad_val_nf)
+
         df_temp = pd.DataFrame(st.session_state.lista_itens)
-        st.dataframe(df_temp[['NF', 'Fornecedor', 'Item', 'quantidade', 'valor_unitario', 'valor_total_item', 'meses_garantia']], use_container_width=True)
+        st.dataframe(df_temp[['NF', 'data_emissao', 'Fornecedor', 'valor_total_nf', 'Item', 'quantidade', 'valor_unitario', 'valor_total_item', 'meses_garantia']], use_container_width=True)
         
         col_btn1, col_btn2 = st.columns(2)
-        if col_btn1.button("🗑️ Limpar Lista"):
+        if col_btn1.button("🗑️ Limpar Formulário"):
             st.session_state.lista_itens = []
-            st.session_state.auto_nf = ""
-            st.session_state.auto_data_emissao = date.today()
-            st.session_state.auto_fornecedor = ""
-            st.session_state.auto_valor_total_nf = 0.0
+            st.session_state.cad_nf = ""
+            st.session_state.cad_data = date.today()
+            st.session_state.cad_forn = ""
+            st.session_state.cad_val_nf = 0.0
             st.rerun()
 
         if col_btn2.button("💾 SALVAR TUDO NO GOOGLE SHEETS", type="primary"):
@@ -284,10 +319,10 @@ with st.expander("📝 Cadastrar / Revisar Itens para Salvar", expanded=True if 
                 conn.update(spreadsheet=url_planilha, worksheet="Garantias", data=df_final)
                 st.success("✅ Salvo com sucesso no Google Sheets!")
                 st.session_state.lista_itens = []
-                st.session_state.auto_nf = ""
-                st.session_state.auto_data_emissao = date.today()
-                st.session_state.auto_fornecedor = ""
-                st.session_state.auto_valor_total_nf = 0.0
+                st.session_state.cad_nf = ""
+                st.session_state.cad_data = date.today()
+                st.session_state.cad_forn = ""
+                st.session_state.cad_val_nf = 0.0
                 st.rerun()
             except Exception as e:
                 st.error(f"Erro ao salvar: {e}")
@@ -314,7 +349,7 @@ if not df.empty:
     
     df['Status'] = df['data_vencimento'].apply(definir_status)
 
-    busca_rapida = st.text_input("🔍 Busca Rápida Avançada (Pode digitar sem acentos, ex: 'lampada', 'luminaria', 'fornecedor'):", placeholder="Digite qualquer termo para filtrar a tabela inteira...").strip()
+    busca_rapida = st.text_input("🔍 Busca Rápida Avançada:", placeholder="Digite qualquer termo para filtrar a tabela...").strip()
     busca_rapida_norm = normalizar_texto(busca_rapida)
 
     col_dt1, col_dt2 = st.columns(2)
@@ -331,9 +366,9 @@ if not df.empty:
     status_opcoes = ["✅ ATIVA", "⚠️ VENCE EM BREVE", "❌ EXPIRADA", "⚪ SEM DATA"]
 
     c_mat, c_forn, c_nf, c_stat = st.columns([1.5, 1.5, 1, 1])
-    buscar_materiais = c_mat.multiselect("📦 Filtrar por Material(is) da Lista", options=lista_materiais, default=None, placeholder="Todos os materiais")
-    buscar_fornecedores = c_forn.multiselect("🏭 Filtrar por Fornecedor(es) da Lista", options=lista_fornecedores, default=None, placeholder="Todos os fornecedores")
-    buscar_nfs = c_nf.multiselect("🧾 Filtrar por Nota(s)", options=lista_nfs, default=None, placeholder="Todas as NFs")
+    buscar_materiais = c_mat.multiselect("📦 Filtrar por Material(is)", options=lista_materiais, default=None)
+    buscar_fornecedores = c_forn.multiselect("🏭 Filtrar por Fornecedor(es)", options=lista_fornecedores, default=None)
+    buscar_nfs = c_nf.multiselect("🧾 Filtrar por Nota(s)", options=lista_nfs, default=None)
     status_selecionados = c_stat.multiselect("🛡️ Status da Garantia", options=status_opcoes, default=status_opcoes)
 
     mask = df['Status'].isin(status_selecionados)
@@ -363,7 +398,6 @@ if not df.empty:
     
     colunas_exibicao = ['NF', 'data_emissao', 'valor_total_nf', 'Item', 'quantidade', 'valor_unitario', 'valor_total_item', 'Fornecedor', 'meses_garantia', 'data_vencimento', 'Status']
     df_filtrado = df.loc[mask, [c for c in colunas_exibicao if c in df.columns]].copy()
-    df_filtrado['ID_Original'] = df_filtrado.index
 
     total_gasto = df_filtrado['valor_total_item'].sum() if 'valor_total_item' in df_filtrado.columns else 0.0
     total_qtd = df_filtrado['quantidade'].sum() if 'quantidade' in df_filtrado.columns else 0
@@ -391,151 +425,21 @@ if not df.empty:
             "valor_unitario": st.column_config.NumberColumn("Val. Unitário", format="R$ %.2f"),
             "valor_total_item": st.column_config.NumberColumn("Total Item", format="R$ %.2f"),
             "meses_garantia": st.column_config.NumberColumn("Meses", format="%d"),
-            "data_vencimento": st.column_config.DateColumn("Vencimento", format="DD/MM/YYYY"),
-            "ID_Original": None
+            "data_vencimento": st.column_config.DateColumn("Vencimento", format="DD/MM/YYYY")
         }
     )
 
-    # -------------------------------------------------------------------------
-    # 9. PAINEL DE MODIFICAÇÃO DE REGISTROS
-    # -------------------------------------------------------------------------
-    st.write("---")
-    with st.expander("✏️ Painel de Modificação de Registros (Editar, Desconto ou Apagar)"):
-        
-        busca_interna = st.text_input("🔍 Procurar nota para modificar por número, fornecedor ou item:", key="busca_painel").strip()
-        busca_interna_norm = normalizar_texto(busca_interna)
-        
-        if busca_interna_norm:
-            mask_interna = (
-                df['NF'].apply(normalizar_texto).str.contains(busca_interna_norm, case=False, na=False) |
-                df['Fornecedor'].apply(normalizar_texto).str.contains(busca_interna_norm, case=False, na=False) |
-                df['Item'].apply(normalizar_texto).str.contains(busca_interna_norm, case=False, na=False)
-            )
-            df_opcoes = df[mask_interna]
-        else:
-            df_opcoes = df
-
-        lista_opcoes_edicao = {}
-        for idx, row in df_opcoes.iterrows():
-            v_item_str = f"R$ {float(row['valor_total_item']):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
-            texto_opcao = f"NF: {row['NF']} | Forn: {row['Fornecedor']} | Item: {row['Item']} ({v_item_str}) (Ref: {idx})"
-            lista_opcoes_edicao[texto_opcao] = idx
-            
-        if lista_opcoes_edicao:
-            item_para_editar = st.selectbox("Selecione o registro encontrado desejado:", options=list(lista_opcoes_edicao.keys()))
-            
-            if item_para_editar:
-                idx_real_planilha = lista_opcoes_edicao[item_para_editar]
-                registro_selecionado = df.loc[idx_real_planilha]
-                
-                with st.form(key=f"form_edicao_{idx_real_planilha}"):
-                    st.write("✏️ *Modifique apenas os campos necessários:*")
-                    
-                    ed_c1, ed_c2, ed_c3, ed_c4 = st.columns([1, 1, 1, 1])
-                    ed_nf = ed_c1.text_input("Número da NF", value=str(registro_selecionado['NF']))
-                    ed_data = ed_c2.date_input("Data da Emissão", value=pd.to_datetime(registro_selecionado['data_emissao']).date(), format="DD/MM/YYYY")
-                    ed_forn = ed_c3.text_input("Fornecedor", value=str(registro_selecionado['Fornecedor']))
-                    ed_total_nf = ed_c4.number_input("Valor Total da NF (R$)", min_value=0.0, value=float(registro_selecionado['valor_total_nf']), step=10.0, format="%.2f")
-                    
-                    ed_ca, ed_cb, ed_cc, ed_cd = st.columns([2, 1, 1, 1])
-                    ed_item = ed_ca.text_input("Descrição do Item", value=str(registro_selecionado['Item']))
-                    ed_qtd = ed_cb.number_input("Quantidade", min_value=1, value=int(registro_selecionado['quantidade']))
-                    ed_uni = ed_cc.number_input("Valor Unitário (R$)", min_value=0.0, value=float(registro_selecionado['valor_unitario']), step=1.0, format="%.2f")
-                    ed_gar = ed_cd.number_input("Garantia (Meses)", min_value=1, value=int(registro_selecionado['meses_garantia']))
-                    
-                    st.markdown("**🏷️ Aplicar Desconto / Abatimento de Valor**")
-                    desconto_val = st.number_input("Valor do Desconto a Abater no Item/NF (R$)", min_value=0.0, value=0.0, step=5.0, format="%.2f", help="Digite o valor a abater. O sistema atualizará o total do item e o total da NF.")
-
-                    st.write("")
-                    btn_col1, btn_col2, btn_col3 = st.columns([1.2, 1.2, 1])
-                    
-                    salvar_alteracao = btn_col1.form_submit_button("💾 Salvar Alterações", type="primary", use_container_width=True)
-                    aplicar_desconto = btn_col2.form_submit_button("🏷️ Aplicar Desconto", use_container_width=True)
-                    apagar_registro = btn_col3.form_submit_button("❌ Apagar Registro", type="secondary", use_container_width=True)
-
-                    if salvar_alteracao:
-                        try:
-                            dt_emissao_ed = pd.to_datetime(ed_data)
-                            dt_venc_ed = dt_emissao_ed + pd.DateOffset(months=int(ed_gar))
-                            v_total_item_ed = float(ed_qtd * ed_uni)
-                            
-                            df.at[idx_real_planilha, 'NF'] = str(ed_nf).strip()
-                            df.at[idx_real_planilha, 'data_emissao'] = ed_data.strftime('%Y-%m-%d')
-                            df.at[idx_real_planilha, 'valor_total_nf'] = float(ed_total_nf)
-                            df.at[idx_real_planilha, 'Item'] = ed_item
-                            df.at[idx_real_planilha, 'quantidade'] = int(ed_qtd)
-                            df.at[idx_real_planilha, 'valor_unitario'] = float(ed_uni)
-                            df.at[idx_real_planilha, 'valor_total_item'] = v_total_item_ed
-                            df.at[idx_real_planilha, 'Fornecedor'] = ed_forn
-                            df.at[idx_real_planilha, 'meses_garantia'] = int(ed_gar)
-                            df.at[idx_real_planilha, 'data_vencimento'] = dt_venc_ed.strftime('%Y-%m-%d')
-                            
-                            if 'Status' in df.columns: df = df.drop(columns=['Status'])
-                            if 'ID_Original' in df.columns: df = df.drop(columns=['ID_Original'])
-                            
-                            url_planilha = st.secrets["connections"]["gsheets"]["spreadsheet"]
-                            conn.update(spreadsheet=url_planilha, worksheet="Garantias", data=df)
-                            st.success("✅ Alteração gravada com sucesso!")
-                            st.rerun()
-                        except Exception as e:
-                            st.error(f"Erro ao atualizar: {e}")
-
-                    if aplicar_desconto:
-                        if desconto_val <= 0:
-                            st.warning("Informe um valor de desconto maior que zero.")
-                        else:
-                            try:
-                                v_item_atual = float(registro_selecionado['valor_total_item'])
-                                v_nf_atual = float(registro_selecionado['valor_total_nf'])
-                                qtd_atual = max(1, int(ed_qtd))
-
-                                novo_v_item = max(0.0, v_item_atual - desconto_val)
-                                novo_v_nf = max(0.0, v_nf_atual - desconto_val)
-                                novo_v_unitario = round(novo_v_item / qtd_atual, 2)
-
-                                df.at[idx_real_planilha, 'valor_total_item'] = novo_v_item
-                                df.at[idx_real_planilha, 'valor_total_nf'] = novo_v_nf
-                                df.at[idx_real_planilha, 'valor_unitario'] = novo_v_unitario
-
-                                if 'Status' in df.columns: df = df.drop(columns=['Status'])
-                                if 'ID_Original' in df.columns: df = df.drop(columns=['ID_Original'])
-
-                                url_planilha = st.secrets["connections"]["gsheets"]["spreadsheet"]
-                                conn.update(spreadsheet=url_planilha, worksheet="Garantias", data=df)
-                                st.success(f"🏷️ Desconto de R$ {desconto_val:.2f} aplicado com sucesso!")
-                                st.rerun()
-                            except Exception as e:
-                                st.error(f"Erro ao aplicar desconto: {e}")
-                    
-                    if apagar_registro:
-                        try:
-                            df = df.drop(index=idx_real_planilha)
-                            
-                            if 'Status' in df.columns: df = df.drop(columns=['Status'])
-                            if 'ID_Original' in df.columns: df = df.drop(columns=['ID_Original'])
-                            
-                            url_planilha = st.secrets["connections"]["gsheets"]["spreadsheet"]
-                            conn.update(spreadsheet=url_planilha, worksheet="Garantias", data=df)
-                            st.success("🗑️ Registro apagado com sucesso!")
-                            st.rerun()
-                        except Exception as e:
-                            st.error(f"Erro ao excluir o registro: {e}")
-        else:
-            st.warning("Nenhum registro correspondente encontrado na busca interna.")
-                        
-    st.caption(f"Exibindo {len(df_filtrado)} registros encontrados.")
-
 # -----------------------------------------------------------------------------
-# 10. ASSINATURA
+# 9. ASSINATURA
 # -----------------------------------------------------------------------------
 st.markdown("---")
 st.markdown(
     """
     <div style='text-align: center; margin-top: 40px; padding-bottom: 20px;'>
-        <div style='font-family: "Gabriola", serif; font-style: italic; font-size: 18px; color: #0056b3; line-height: 1.2;'>
+        <div style='font-family: "Gabriola", serif; font-style: italic; font-size: 18px; color: #0056b3;'>
             Developed by:
         </div>
-        <div style='font-family: "Gabriola", serif; font-size: 22px; font-weight: bold; color: #1e7044; line-height: 1.2; margin-top: 4px;'>
+        <div style='font-family: "Gabriola", serif; font-size: 22px; font-weight: bold; color: #1e7044; margin-top: 4px;'>
             Edison Duarte Filho®
         </div>
     </div>
