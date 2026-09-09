@@ -6,6 +6,7 @@ import unicodedata
 import re
 import json
 import io
+import time
 from PIL import Image
 from google import genai
 from google.genai import types
@@ -55,7 +56,7 @@ def carregar_dados():
 df_existente = carregar_dados()
 
 # -----------------------------------------------------------------------------
-# 3. FUNÇÃO DE LEITURA DE NF VIA GEMINI API (SUPORTE A IMAGENS E PDF)
+# 3. FUNÇÃO DE LEITURA DE NF VIA GEMINI API (COM TRATAMENTO DE RETRY/OVERLOAD)
 # -----------------------------------------------------------------------------
 def processar_nota_fiscal(arquivo_bytes, mime_type):
     api_key = st.secrets.get("GEMINI_API_KEY")
@@ -92,18 +93,26 @@ def processar_nota_fiscal(arquivo_bytes, mime_type):
     3. Se não encontrar algum valor numérico, use 0.0.
     """
 
-    response = client.models.generate_content(
-        model='gemini-3.6-flash',
-        contents=[
-            types.Part.from_bytes(data=arquivo_bytes, mime_type=mime_type),
-            prompt
-        ],
-        config=types.GenerateContentConfig(
-            response_mime_type="application/json"
-        )
-    )
-
-    return json.loads(response.text)
+    # Lógica de Retry para lidar com erro 503 (Servidor Ocupado)
+    max_tentativas = 3
+    for tentativa in range(1, max_tentativas + 1):
+        try:
+            response = client.models.generate_content(
+                model='gemini-3.6-flash',
+                contents=[
+                    types.Part.from_bytes(data=arquivo_bytes, mime_type=mime_type),
+                    prompt
+                ],
+                config=types.GenerateContentConfig(
+                    response_mime_type="application/json"
+                )
+            )
+            return json.loads(response.text)
+        except Exception as e:
+            if ("503" in str(e) or "UNAVAILABLE" in str(e)) and tentativa < max_tentativas:
+                time.sleep(2)  # Aguarda 2 segundos antes de tentar novamente
+                continue
+            raise e
 
 # -----------------------------------------------------------------------------
 # 4. ESTADO DA SESSÃO
@@ -179,7 +188,10 @@ with st.expander("🤖 Leitura Automática de NF por PDF ou Foto (IA)", expanded
                         st.rerun()
 
                     except Exception as e:
-                        st.error(f"Erro no processamento da nota: {e}")
+                        if "503" in str(e) or "UNAVAILABLE" in str(e):
+                            st.warning("⚠️ O serviço do Gemini está temporariamente sobrecarregado. Aguarde alguns segundos e clique novamente em 'Extrair Dados da Nota'.")
+                        else:
+                            st.error(f"Erro no processamento da nota: {e}")
 
 # -----------------------------------------------------------------------------
 # 6. FORMULÁRIO DE CADASTRO MANUAL OU REVISÃO DA IA
