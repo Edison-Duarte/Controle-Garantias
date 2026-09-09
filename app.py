@@ -8,6 +8,8 @@ import json
 import io
 import time
 from PIL import Image
+from pydantic import BaseModel, Field
+from typing import List
 from google import genai
 from google.genai import types
 
@@ -18,7 +20,23 @@ st.set_page_config(page_title="InvoiceSis - Gestão de Garantias & Custos", layo
 st.title("🛡️ InvoiceSis | Controle de Garantias e Custos")
 
 # -----------------------------------------------------------------------------
-# 2. CONEXÃO COM GOOGLE SHEETS E FUNÇÕES AUXILIARES
+# 2. SCHEMAS DE ESTRUTURAÇÃO PARA A IA (PYDANTIC)
+# -----------------------------------------------------------------------------
+class ItemNota(BaseModel):
+    descricao: str = Field(description="Descrição clara do item ou produto")
+    quantidade: float = Field(default=1.0, description="Quantidade comprada")
+    valor_unitario: float = Field(default=0.0, description="Valor unitário do item em R$")
+    valor_total_item: float = Field(default=0.0, description="Valor total do item em R$")
+
+class NotaFiscal(BaseModel):
+    numero_nota: str = Field(description="Número ou identificador da Nota Fiscal/Cupom")
+    data_emissao: str = Field(description="Data de emissão no formato YYYY-MM-DD")
+    fornecedor_nome: str = Field(description="Nome do fornecedor, emissor ou razão social")
+    valor_total: float = Field(default=0.0, description="Valor total geral da nota fiscal em R$")
+    itens: List[ItemNota] = Field(default_factory=list, description="Lista de itens presentes na nota")
+
+# -----------------------------------------------------------------------------
+# 3. CONEXÃO COM GOOGLE SHEETS E FUNÇÕES AUXILIARES
 # -----------------------------------------------------------------------------
 conn = st.connection("gsheets", type=GSheetsConnection)
 
@@ -56,7 +74,7 @@ def carregar_dados():
 df_existente = carregar_dados()
 
 # -----------------------------------------------------------------------------
-# 3. FUNÇÃO DE LEITURA DE NF VIA GEMINI API (RETRY ROBUSTO & MODELO ATUALIZADO)
+# 4. FUNÇÃO DE LEITURA DE NF VIA GEMINI API (SCHEMA ESTRITO + RETRY)
 # -----------------------------------------------------------------------------
 def processar_nota_fiscal(arquivo_bytes, mime_type):
     api_key = st.secrets.get("GEMINI_API_KEY")
@@ -69,28 +87,12 @@ def processar_nota_fiscal(arquivo_bytes, mime_type):
     client = genai.Client(api_key=api_key)
 
     prompt = """
-    Analise esta imagem ou documento PDF de Nota Fiscal (NFe, NFCe, DANFE ou Cupom Fiscal) e extraia exatamente as informações abaixo no formato JSON.
-
-    Estrutura JSON obrigatória:
-    {
-        "numero_nota": "string",
-        "data_emissao": "YYYY-MM-DD",
-        "fornecedor_nome": "string",
-        "valor_total": float,
-        "itens": [
-            {
-                "descricao": "string",
-                "quantidade": float,
-                "valor_unitario": float,
-                "valor_total_item": float
-            }
-        ]
-    }
-
-    Regras:
-    1. Retorne APENAS o objeto JSON válido.
-    2. Se não encontrar algum campo textual, use "" (string vazia).
-    3. Se não encontrar algum valor numérico, use 0.0.
+    Analise com extrema precisão esta Nota Fiscal (NFe, NFCe, DANFE ou Cupom Fiscal) e extraia:
+    1. O número do documento/nota.
+    2. A data exata de emissão (no formato YYYY-MM-DD).
+    3. O nome completo ou razão social do fornecedor/emissor.
+    4. O valor total geral da nota fiscal.
+    5. A lista detalhada de todos os itens/produtos comprados com quantidade, valor unitário e total.
     """
 
     max_tentativas = 5
@@ -105,7 +107,8 @@ def processar_nota_fiscal(arquivo_bytes, mime_type):
                     prompt
                 ],
                 config=types.GenerateContentConfig(
-                    response_mime_type="application/json"
+                    response_mime_type="application/json",
+                    response_schema=NotaFiscal
                 )
             )
             return json.loads(response.text)
@@ -118,7 +121,7 @@ def processar_nota_fiscal(arquivo_bytes, mime_type):
             raise e
 
 # -----------------------------------------------------------------------------
-# 4. ESTADO DA SESSÃO (INICIALIZAÇÃO DAS VARIÁVEIS DO FORMULÁRIO)
+# 5. ESTADO DA SESSÃO (INICIALIZAÇÃO DAS VARIÁVEIS DO FORMULÁRIO)
 # -----------------------------------------------------------------------------
 if 'lista_itens' not in st.session_state:
     st.session_state.lista_itens = []
@@ -133,7 +136,7 @@ if 'auto_valor_total_nf' not in st.session_state:
     st.session_state.auto_valor_total_nf = 0.0
 
 # -----------------------------------------------------------------------------
-# 5. EXPANDER: LEITURA AUTOMÁTICA POR IA (PDF / IMAGEM)
+# 6. EXPANDER: LEITURA AUTOMÁTICA POR IA (PDF / IMAGEM)
 # -----------------------------------------------------------------------------
 with st.expander("🤖 Leitura Automática de NF por PDF ou Foto (IA)", expanded=False):
     st.write("Suba o arquivo **PDF** ou a foto (JPG, PNG) da Nota Fiscal para extrair os dados automaticamente.")
@@ -161,22 +164,26 @@ with st.expander("🤖 Leitura Automática de NF por PDF ou Foto (IA)", expanded
                     try:
                         dados = processar_nota_fiscal(bytes_data, mime_type)
 
+                        # Extração dos dados do cabeçalho
                         nf_num = str(dados.get("numero_nota", "")).strip()
-                        dt_emissao_str = dados.get("data_emissao", date.today().strftime('%Y-%m-%d'))
+                        dt_emissao_str = dados.get("data_emissao", "")
                         
                         try:
                             dt_emissao_obj = datetime.strptime(dt_emissao_str, '%Y-%m-%d').date()
                         except:
                             dt_emissao_obj = date.today()
 
-                        forn = dados.get("fornecedor_nome", "")
+                        forn = str(dados.get("fornecedor_nome", "")).strip()
                         v_total_nf = float(dados.get("valor_total", 0.0))
 
-                        # Atualiza os campos do cabeçalho
+                        # Grava o cabeçalho no estado global da sessão
                         st.session_state.auto_nf = nf_num
                         st.session_state.auto_data_emissao = dt_emissao_obj
                         st.session_state.auto_fornecedor = forn
                         st.session_state.auto_valor_total_nf = v_total_nf
+
+                        # Limpa itens anteriores para evitar duplicidade na reextração
+                        st.session_state.lista_itens = []
 
                         itens_lidos = dados.get("itens", [])
                         garantia_padrao = 12
@@ -202,7 +209,7 @@ with st.expander("🤖 Leitura Automática de NF por PDF ou Foto (IA)", expanded
                                 "data_vencimento": dt_venc.strftime('%Y-%m-%d')
                             })
 
-                        st.success(f"✅ Dados da Nota e {len(itens_lidos)} item(ns) preenchidos com sucesso!")
+                        st.success(f"✅ NF Nº {nf_num if nf_num else 'S/N'} ({forn}) lida com sucesso! {len(itens_lidos)} item(ns) identificados.")
                         st.rerun()
 
                     except Exception as e:
@@ -213,7 +220,7 @@ with st.expander("🤖 Leitura Automática de NF por PDF ou Foto (IA)", expanded
                             st.error(f"Erro no processamento da nota: {e}")
 
 # -----------------------------------------------------------------------------
-# 6. FORMULÁRIO DE CADASTRO MANUAL OU REVISÃO DA IA
+# 7. FORMULÁRIO DE CADASTRO MANUAL OU REVISÃO DA IA
 # -----------------------------------------------------------------------------
 with st.expander("📝 Cadastrar / Revisar Itens para Salvar", expanded=True if (st.session_state.lista_itens or st.session_state.auto_nf) else False):
     st.markdown("#### Adicionar Item Manualmente / Revisar Cabeçalho")
@@ -286,7 +293,7 @@ with st.expander("📝 Cadastrar / Revisar Itens para Salvar", expanded=True if 
                 st.error(f"Erro ao salvar: {e}")
 
 # -----------------------------------------------------------------------------
-# 7. HISTÓRICO, FILTROS E SOMAS FINANCEIRAS
+# 8. HISTÓRICO, FILTROS E SOMAS FINANCEIRAS
 # -----------------------------------------------------------------------------
 st.divider()
 st.subheader("📊 Consulta e Relatório de Gastos")
@@ -390,7 +397,7 @@ if not df.empty:
     )
 
     # -------------------------------------------------------------------------
-    # 8. PAINEL DE MODIFICAÇÃO DE REGISTROS
+    # 9. PAINEL DE MODIFICAÇÃO DE REGISTROS
     # -------------------------------------------------------------------------
     st.write("---")
     with st.expander("✏️ Painel de Modificação de Registros (Editar, Desconto ou Apagar)"):
@@ -519,7 +526,7 @@ if not df.empty:
     st.caption(f"Exibindo {len(df_filtrado)} registros encontrados.")
 
 # -----------------------------------------------------------------------------
-# 9. ASSINATURA
+# 10. ASSINATURA
 # -----------------------------------------------------------------------------
 st.markdown("---")
 st.markdown(
