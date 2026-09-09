@@ -35,7 +35,7 @@ class NotaFiscal(BaseModel):
     itens: List[ItemNota] = Field(default_factory=list, description="Lista de itens presentes na nota")
 
 # -----------------------------------------------------------------------------
-# 3. INITIALIZAÇÃO DO ESTADO GLOBAL (SESSION STATE)
+# 3. INICIALIZAÇÃO DO ESTADO GLOBAL (SESSION STATE)
 # -----------------------------------------------------------------------------
 if 'lista_itens' not in st.session_state:
     st.session_state.lista_itens = []
@@ -89,7 +89,7 @@ def carregar_dados():
 df_existente = carregar_dados()
 
 # -----------------------------------------------------------------------------
-# 5. FUNÇÃO DE LEITURA DE NF VIA GEMINI API
+# 5. FUNÇÃO DE LEITURA DE NF VIA GEMINI API (MODELO GEMINI-3.6-FLASH)
 # -----------------------------------------------------------------------------
 def processar_nota_fiscal(arquivo_bytes, mime_type):
     api_key = st.secrets.get("GEMINI_API_KEY")
@@ -116,7 +116,7 @@ def processar_nota_fiscal(arquivo_bytes, mime_type):
     for tentativa in range(1, max_tentativas + 1):
         try:
             response = client.models.generate_content(
-                model='gemini-2.5-flash',
+                model='gemini-3.6-flash',
                 contents=[
                     types.Part.from_bytes(data=arquivo_bytes, mime_type=mime_type),
                     prompt
@@ -250,7 +250,6 @@ with st.expander("📝 Cadastrar / Revisar Itens para Salvar", expanded=True if 
     st.markdown("#### Cabeçalho da Nota Fiscal")
     c1, c2, c3, c4 = st.columns([1, 1, 1.5, 1])
     
-    # Vinculamos diretamente a chave do session_state via key="cad_..."
     nf_comum = c1.text_input("Número da NF", key="cad_nf")
     data_emissao_comum = c2.date_input("Data da Emissão", format="DD/MM/YYYY", key="cad_data")
     fornecedor_comum = c3.text_input("Fornecedor", key="cad_forn")
@@ -292,7 +291,7 @@ with st.expander("📝 Cadastrar / Revisar Itens para Salvar", expanded=True if 
         st.write("---")
         st.subheader("📋 Itens Extraídos Prontos para Gravação")
         
-        # Sincroniza cabeçalho caso o usuário altere os campos no topo antes de salvar
+        # Sincroniza o cabeçalho caso o usuário altere os campos do topo antes de salvar
         for item in st.session_state.lista_itens:
             item["NF"] = str(st.session_state.cad_nf).strip()
             item["data_emissao"] = st.session_state.cad_data.strftime('%Y-%m-%d')
