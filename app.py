@@ -56,7 +56,7 @@ def carregar_dados():
 df_existente = carregar_dados()
 
 # -----------------------------------------------------------------------------
-# 3. FUNÇÃO DE LEITURA DE NF VIA GEMINI API (COM TRATAMENTO DE RETRY/OVERLOAD)
+# 3. FUNÇÃO DE LEITURA DE NF VIA GEMINI API (RETRY ROBUSTO & MODELO ESTÁVEL)
 # -----------------------------------------------------------------------------
 def processar_nota_fiscal(arquivo_bytes, mime_type):
     api_key = st.secrets.get("GEMINI_API_KEY")
@@ -93,12 +93,13 @@ def processar_nota_fiscal(arquivo_bytes, mime_type):
     3. Se não encontrar algum valor numérico, use 0.0.
     """
 
-    # Lógica de Retry para lidar com erro 503 (Servidor Ocupado)
-    max_tentativas = 3
+    max_tentativas = 5
+    tempo_espera = 2
+
     for tentativa in range(1, max_tentativas + 1):
         try:
             response = client.models.generate_content(
-                model='gemini-3.6-flash',
+                model='gemini-2.5-flash',
                 contents=[
                     types.Part.from_bytes(data=arquivo_bytes, mime_type=mime_type),
                     prompt
@@ -109,16 +110,27 @@ def processar_nota_fiscal(arquivo_bytes, mime_type):
             )
             return json.loads(response.text)
         except Exception as e:
-            if ("503" in str(e) or "UNAVAILABLE" in str(e)) and tentativa < max_tentativas:
-                time.sleep(2)  # Aguarda 2 segundos antes de tentar novamente
+            msg_erro = str(e).upper()
+            if ("503" in msg_erro or "UNAVAILABLE" in msg_erro or "RESOURCE_EXHAUSTED" in msg_erro) and tentativa < max_tentativas:
+                time.sleep(tempo_espera)
+                tempo_espera *= 2
                 continue
             raise e
 
 # -----------------------------------------------------------------------------
-# 4. ESTADO DA SESSÃO
+# 4. ESTADO DA SESSÃO (INICIALIZAÇÃO DAS VARIÁVEIS DO FORMULÁRIO)
 # -----------------------------------------------------------------------------
 if 'lista_itens' not in st.session_state:
     st.session_state.lista_itens = []
+
+if 'auto_nf' not in st.session_state:
+    st.session_state.auto_nf = ""
+if 'auto_data_emissao' not in st.session_state:
+    st.session_state.auto_data_emissao = date.today()
+if 'auto_fornecedor' not in st.session_state:
+    st.session_state.auto_fornecedor = ""
+if 'auto_valor_total_nf' not in st.session_state:
+    st.session_state.auto_valor_total_nf = 0.0
 
 # -----------------------------------------------------------------------------
 # 5. EXPANDER: LEITURA AUTOMÁTICA POR IA (PDF / IMAGEM)
@@ -153,12 +165,18 @@ with st.expander("🤖 Leitura Automática de NF por PDF ou Foto (IA)", expanded
                         dt_emissao_str = dados.get("data_emissao", date.today().strftime('%Y-%m-%d'))
                         
                         try:
-                            dt_emissao_obj = datetime.strptime(dt_emissao_str, '%Y-%m-%d')
+                            dt_emissao_obj = datetime.strptime(dt_emissao_str, '%Y-%m-%d').date()
                         except:
-                            dt_emissao_obj = datetime.now()
+                            dt_emissao_obj = date.today()
 
                         forn = dados.get("fornecedor_nome", "")
                         v_total_nf = float(dados.get("valor_total", 0.0))
+
+                        # Atualiza os campos do cabeçalho
+                        st.session_state.auto_nf = nf_num
+                        st.session_state.auto_data_emissao = dt_emissao_obj
+                        st.session_state.auto_fornecedor = forn
+                        st.session_state.auto_valor_total_nf = v_total_nf
 
                         itens_lidos = dados.get("itens", [])
                         garantia_padrao = 12
@@ -169,7 +187,7 @@ with st.expander("🤖 Leitura Automática de NF por PDF ou Foto (IA)", expanded
                             v_unit = float(it.get("valor_unitario", 0.0))
                             v_tot_item = float(it.get("valor_total_item", qtd * v_unit))
                             
-                            dt_venc = dt_emissao_obj + pd.DateOffset(months=garantia_padrao)
+                            dt_venc = pd.to_datetime(dt_emissao_obj) + pd.DateOffset(months=garantia_padrao)
 
                             st.session_state.lista_itens.append({
                                 "NF": nf_num,
@@ -184,25 +202,27 @@ with st.expander("🤖 Leitura Automática de NF por PDF ou Foto (IA)", expanded
                                 "data_vencimento": dt_venc.strftime('%Y-%m-%d')
                             })
 
-                        st.success(f"✅ {len(itens_lidos)} item(ns) extraído(s) com sucesso! Confira abaixo no formulário antes de salvar.")
+                        st.success(f"✅ Dados da Nota e {len(itens_lidos)} item(ns) preenchidos com sucesso!")
                         st.rerun()
 
                     except Exception as e:
-                        if "503" in str(e) or "UNAVAILABLE" in str(e):
-                            st.warning("⚠️ O serviço do Gemini está temporariamente sobrecarregado. Aguarde alguns segundos e clique novamente em 'Extrair Dados da Nota'.")
+                        msg_e = str(e).upper()
+                        if "503" in msg_e or "UNAVAILABLE" in msg_e or "RESOURCE_EXHAUSTED" in msg_e:
+                            st.warning("⚠️ O serviço do Gemini está temporariamente sobrecarregado. Aguarde alguns instantes e tente novamente.")
                         else:
                             st.error(f"Erro no processamento da nota: {e}")
 
 # -----------------------------------------------------------------------------
 # 6. FORMULÁRIO DE CADASTRO MANUAL OU REVISÃO DA IA
 # -----------------------------------------------------------------------------
-with st.expander("📝 Cadastrar / Revisar Itens para Salvar", expanded=True if st.session_state.lista_itens else False):
-    st.markdown("#### Adicionar Item Manualmente")
+with st.expander("📝 Cadastrar / Revisar Itens para Salvar", expanded=True if (st.session_state.lista_itens or st.session_state.auto_nf) else False):
+    st.markdown("#### Adicionar Item Manualmente / Revisar Cabeçalho")
     c1, c2, c3, c4 = st.columns([1, 1, 1, 1])
-    nf_comum = c1.text_input("Número da NF", key="cad_nf")
-    data_emissao_comum = c2.date_input("Data da Emissão", value=date.today(), format="DD/MM/YYYY", key="cad_data")
-    fornecedor_comum = c3.text_input("Fornecedor", key="cad_forn")
-    valor_total_nf_comum = c4.number_input("Valor Total da NF (R$)", min_value=0.0, value=0.0, step=10.0, format="%.2f", key="cad_val_nf")
+    
+    nf_comum = c1.text_input("Número da NF", value=st.session_state.auto_nf, key="cad_nf")
+    data_emissao_comum = c2.date_input("Data da Emissão", value=st.session_state.auto_data_emissao, format="DD/MM/YYYY", key="cad_data")
+    fornecedor_comum = c3.text_input("Fornecedor", value=st.session_state.auto_fornecedor, key="cad_forn")
+    valor_total_nf_comum = c4.number_input("Valor Total da NF (R$)", min_value=0.0, value=st.session_state.auto_valor_total_nf, step=10.0, format="%.2f", key="cad_val_nf")
 
     st.divider()
     
@@ -243,6 +263,10 @@ with st.expander("📝 Cadastrar / Revisar Itens para Salvar", expanded=True if 
         col_btn1, col_btn2 = st.columns(2)
         if col_btn1.button("🗑️ Limpar Lista"):
             st.session_state.lista_itens = []
+            st.session_state.auto_nf = ""
+            st.session_state.auto_data_emissao = date.today()
+            st.session_state.auto_fornecedor = ""
+            st.session_state.auto_valor_total_nf = 0.0
             st.rerun()
 
         if col_btn2.button("💾 SALVAR TUDO NO GOOGLE SHEETS", type="primary"):
@@ -253,6 +277,10 @@ with st.expander("📝 Cadastrar / Revisar Itens para Salvar", expanded=True if 
                 conn.update(spreadsheet=url_planilha, worksheet="Garantias", data=df_final)
                 st.success("✅ Salvo com sucesso no Google Sheets!")
                 st.session_state.lista_itens = []
+                st.session_state.auto_nf = ""
+                st.session_state.auto_data_emissao = date.today()
+                st.session_state.auto_fornecedor = ""
+                st.session_state.auto_valor_total_nf = 0.0
                 st.rerun()
             except Exception as e:
                 st.error(f"Erro ao salvar: {e}")
@@ -360,7 +388,7 @@ if not df.empty:
             "ID_Original": None
         }
     )
-    
+
     # -------------------------------------------------------------------------
     # 8. PAINEL DE MODIFICAÇÃO DE REGISTROS
     # -------------------------------------------------------------------------
