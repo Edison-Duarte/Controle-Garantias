@@ -246,7 +246,13 @@ with st.expander("🤖 Leitura Automática de NF por PDF ou Foto (IA)", expanded
 # -----------------------------------------------------------------------------
 # 7. FORMULÁRIO DE CADASTRO MANUAL OU REVISÃO DA IA
 # -----------------------------------------------------------------------------
-with st.expander("📝 Cadastrar / Revisar Itens para Salvar", expanded=True if (st.session_state.lista_itens or st.session_state.cad_nf) else False):
+def limpar_formulario():
+    st.session_state.lista_itens = []
+    for key in ['cad_nf', 'cad_data', 'cad_forn', 'cad_val_nf']:
+        if key in st.session_state:
+            del st.session_state[key]
+
+with st.expander("📝 Cadastrar / Revisar Itens para Salvar", expanded=True if (st.session_state.lista_itens or st.session_state.get('cad_nf')) else False):
     st.markdown("#### Cabeçalho da Nota Fiscal")
     c1, c2, c3, c4 = st.columns([1, 1, 1.5, 1])
     
@@ -302,13 +308,7 @@ with st.expander("📝 Cadastrar / Revisar Itens para Salvar", expanded=True if 
         st.dataframe(df_temp[['NF', 'data_emissao', 'Fornecedor', 'valor_total_nf', 'Item', 'quantidade', 'valor_unitario', 'valor_total_item', 'meses_garantia']], use_container_width=True)
         
         col_btn1, col_btn2 = st.columns(2)
-        if col_btn1.button("🗑️ Limpar Formulário"):
-            st.session_state.lista_itens = []
-            st.session_state.cad_nf = ""
-            st.session_state.cad_data = date.today()
-            st.session_state.cad_forn = ""
-            st.session_state.cad_val_nf = 0.0
-            st.rerun()
+        col_btn1.button("🗑️ Limpar Formulário", on_click=limpar_formulario)
 
         if col_btn2.button("💾 SALVAR TUDO NO GOOGLE SHEETS", type="primary"):
             try:
@@ -317,11 +317,8 @@ with st.expander("📝 Cadastrar / Revisar Itens para Salvar", expanded=True if 
                 url_planilha = st.secrets["connections"]["gsheets"]["spreadsheet"]
                 conn.update(spreadsheet=url_planilha, worksheet="Garantias", data=df_final)
                 st.success("✅ Salvo com sucesso no Google Sheets!")
-                st.session_state.lista_itens = []
-                st.session_state.cad_nf = ""
-                st.session_state.cad_data = date.today()
-                st.session_state.cad_forn = ""
-                st.session_state.cad_val_nf = 0.0
+                time.sleep(1)
+                limpar_formulario()
                 st.rerun()
             except Exception as e:
                 st.error(f"Erro ao salvar: {e}")
