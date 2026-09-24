@@ -6,13 +6,11 @@ import unicodedata
 import re
 import json
 import time
-import base64
 from PIL import Image
 from pydantic import BaseModel, Field
 from typing import List
 from google import genai
 from google.genai import types
-from groq import Groq
 
 # -----------------------------------------------------------------------------
 # 1. CONFIGURAÇÃO DA PÁGINA
@@ -91,34 +89,9 @@ def carregar_dados():
 df_existente = carregar_dados()
 
 # -----------------------------------------------------------------------------
-# 5. FUNÇÕES DE LEITURA DE NF VIA GEMINI API E GROQ (FALLBACK GRATUITO)
+# 5. FUNÇÃO DE LEITURA DE NF VIA GEMINI API (MODELO GEMINI-3.6-FLASH)
 # -----------------------------------------------------------------------------
-PROMPT_EXTRACAO = """
-Analise esta Nota Fiscal/Cupom Fiscal/DANFE com atenção total aos dados do CABEÇALHO e DOS ITENS:
-- Identifique o Número do Documento / Nota Fiscal (ex: Número, NF, Nº, Doc).
-- Identifique a Data de Emissão (converta para o formato YYYY-MM-DD).
-- Identifique a Razão Social ou Nome Fantasia do Fornecedor/Emissor.
-- Identifique o Valor Total Geral do Documento (R$).
-- Identifique cada item/produto individual da lista com descrição, quantidade, valor unitário e valor total.
-
-Retorne EXCLUSIVAMENTE um objeto JSON válido seguindo a seguinte estrutura de campos:
-{
-  "numero_nota": "string",
-  "data_emissao": "YYYY-MM-DD",
-  "fornecedor_nome": "string",
-  "valor_total": float,
-  "itens": [
-    {
-      "descricao": "string",
-      "quantidade": float,
-      "valor_unitario": float,
-      "valor_total_item": float
-    }
-  ]
-}
-"""
-
-def processar_nota_fiscal_gemini(arquivo_bytes, mime_type):
+def processar_nota_fiscal(arquivo_bytes, mime_type):
     api_key = st.secrets.get("GEMINI_API_KEY")
     if not api_key:
         api_key = st.secrets.get("connections", {}).get("gsheets", {}).get("GEMINI_API_KEY")
@@ -127,6 +100,15 @@ def processar_nota_fiscal_gemini(arquivo_bytes, mime_type):
         raise ValueError("Chave 'GEMINI_API_KEY' não foi encontrada nos secrets do Streamlit.")
 
     client = genai.Client(api_key=api_key)
+
+    prompt = """
+    Analise esta Nota Fiscal/Cupom Fiscal/DANFE com atenção total aos dados do CABEÇALHO e DOS ITENS:
+    - Identifique o Número do Documento / Nota Fiscal (ex: Número, NF, Nº, Doc).
+    - Identifique a Data de Emissão (converta para o formato YYYY-MM-DD).
+    - Identifique a Razão Social ou Nome Fantasia do Fornecedor/Emissor.
+    - Identifique o Valor Total Geral do Documento (R$).
+    - Identifique cada item/produto individual da lista com descrição, quantidade, valor unitário e valor total.
+    """
 
     max_tentativas = 3
     tempo_espera = 2
@@ -137,7 +119,7 @@ def processar_nota_fiscal_gemini(arquivo_bytes, mime_type):
                 model='gemini-3.6-flash',
                 contents=[
                     types.Part.from_bytes(data=arquivo_bytes, mime_type=mime_type),
-                    PROMPT_EXTRACAO
+                    prompt
                 ],
                 config=types.GenerateContentConfig(
                     response_mime_type="application/json",
@@ -153,31 +135,6 @@ def processar_nota_fiscal_gemini(arquivo_bytes, mime_type):
                 tempo_espera *= 2
                 continue
             raise e
-
-def processar_nota_fiscal_groq(arquivo_bytes, mime_type):
-    api_key = st.secrets.get("GROQ_API_KEY")
-    if not api_key:
-        api_key = st.secrets.get("connections", {}).get("gsheets", {}).get("GROQ_API_KEY")
-    
-    if not api_key:
-        raise ValueError("Chave 'GROQ_API_KEY' não configurada nos secrets do Streamlit.")
-
-    client = Groq(api_key=api_key)
-
-    completion = client.chat.completions.create(
-        model="llama-3.3-70b-versatile",
-        messages=[
-            {
-                "role": "user",
-                "content": PROMPT_EXTRACAO
-            }
-        ],
-        temperature=0.1,
-        response_format={"type": "json_object"}
-    )
-    
-    conteudo_texto = completion.choices[0].message.content
-    return json.loads(conteudo_texto)
 
 # -----------------------------------------------------------------------------
 # 6. EXPANDER: LEITURA AUTOMÁTICA POR IA (PDF / IMAGEM)
@@ -204,20 +161,10 @@ with st.expander("🤖 Leitura Automática de NF por PDF ou Foto (IA)", expanded
                 mime_type = f"image/{fmt.lower()}"
             
             if st.button("🚀 Extrair Dados da Nota", type="primary"):
-                with st.spinner("Analisando o documento com IA..."):
-                    dados = None
-                    # TENTATIVA 1: GEMINI
+                with st.spinner("O Gemini está lendo o documento e extraindo o cabeçalho + itens..."):
                     try:
-                        dados = processar_nota_fiscal_gemini(bytes_data, mime_type)
-                    except Exception as e_gemini:
-                        st.warning("⚠️ Gemini temporariamente indisponível ou sobrecarregado. Redirecionando automaticamente para a IA de reserva gratuita (Groq)...")
-                        # TENTATIVA 2: GROQ (FALLBACK GRATUITO)
-                        try:
-                            dados = processar_nota_fiscal_groq(bytes_data, mime_type)
-                        except Exception as e_groq:
-                            st.error(f"Erro no processamento da nota em ambos os serviços de IA. Gemini: {e_gemini} | Groq: {e_groq}")
+                        dados = processar_nota_fiscal(bytes_data, mime_type)
 
-                    if dados:
                         # Tratamento seguro do Número da NF
                         raw_nf = str(dados.get("numero_nota", "")).strip()
                         nf_num = raw_nf if raw_nf and raw_nf.lower() != "null" else "S/N"
@@ -239,7 +186,7 @@ with st.expander("🤖 Leitura Automática de NF por PDF ou Foto (IA)", expanded
                         except:
                             v_total_nf = 0.0
 
-                        # ATUALIZAÇÃO DIRETA NO SESSION STATE
+                        # ATUALIZAÇÃO DIRETA NO SESSION STATE (FORÇA OS INPUTS VISUAIS A SE ATUALIZAREM)
                         st.session_state.cad_nf = nf_num
                         st.session_state.cad_data = dt_emissao_obj
                         st.session_state.cad_forn = forn
@@ -288,6 +235,13 @@ with st.expander("🤖 Leitura Automática de NF por PDF ou Foto (IA)", expanded
 
                         st.success(f"✅ Sucesso! Extraído: NF Nº **{nf_num}** | Fornecedor: **{forn}** | Valor Total: **R$ {v_total_nf:,.2f}** | Itens: **{len(itens_lidos)}**")
                         st.rerun()
+
+                    except Exception as e:
+                        msg_e = str(e).upper()
+                        if "503" in msg_e or "UNAVAILABLE" in msg_e or "RESOURCE_EXHAUSTED" in msg_e or "429" in msg_e:
+                            st.warning("⚠️ O serviço do Gemini está temporariamente sobrecarregado. Aguarde alguns instantes e tente novamente.")
+                        else:
+                            st.error(f"Erro no processamento da nota: {e}")
 
 # -----------------------------------------------------------------------------
 # 7. FORMULÁRIO DE CADASTRO MANUAL OU REVISÃO DA IA
