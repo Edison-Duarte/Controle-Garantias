@@ -89,8 +89,32 @@ def carregar_dados():
 df_existente = carregar_dados()
 
 # -----------------------------------------------------------------------------
-# 5. FUNÇÃO DE LEITURA DE NF VIA GEMINI API (MODELO GEMINI-3.6-FLASH)
+# 5. FUNÇÃO DE LEITURA DE NF VIA GEMINI (COM FALLBACK PARA GEMINI-2.5-FLASH)
 # -----------------------------------------------------------------------------
+PROMPT_EXTRACAO = """
+Analise esta Nota Fiscal/Cupom Fiscal/DANFE com atenção total aos dados do CABEÇALHO e DOS ITENS:
+- Identifique o Número do Documento / Nota Fiscal (ex: Número, NF, Nº, Doc).
+- Identifique a Data de Emissão (converta para o formato YYYY-MM-DD).
+- Identifique a Razão Social ou Nome Fantasia do Fornecedor/Emissor.
+- Identifique o Valor Total Geral do Documento (R$).
+- Identifique cada item/produto individual da lista com descrição, quantidade, valor unitário e valor total.
+"""
+
+def extrair_com_modelo_gemini(client, modelo, arquivo_bytes, mime_type):
+    response = client.models.generate_content(
+        model=modelo,
+        contents=[
+            types.Part.from_bytes(data=arquivo_bytes, mime_type=mime_type),
+            PROMPT_EXTRACAO
+        ],
+        config=types.GenerateContentConfig(
+            response_mime_type="application/json",
+            response_schema=NotaFiscal,
+            temperature=0.1
+        )
+    )
+    return json.loads(response.text)
+
 def processar_nota_fiscal(arquivo_bytes, mime_type):
     api_key = st.secrets.get("GEMINI_API_KEY")
     if not api_key:
@@ -101,40 +125,23 @@ def processar_nota_fiscal(arquivo_bytes, mime_type):
 
     client = genai.Client(api_key=api_key)
 
-    prompt = """
-    Analise esta Nota Fiscal/Cupom Fiscal/DANFE com atenção total aos dados do CABEÇALHO e DOS ITENS:
-    - Identifique o Número do Documento / Nota Fiscal (ex: Número, NF, Nº, Doc).
-    - Identifique a Data de Emissão (converta para o formato YYYY-MM-DD).
-    - Identifique a Razão Social ou Nome Fantasia do Fornecedor/Emissor.
-    - Identifique o Valor Total Geral do Documento (R$).
-    - Identifique cada item/produto individual da lista com descrição, quantidade, valor unitário e valor total.
-    """
-
-    max_tentativas = 3
-    tempo_espera = 2
-
-    for tentativa in range(1, max_tentativas + 1):
-        try:
-            response = client.models.generate_content(
-                model='gemini-3.6-flash',
-                contents=[
-                    types.Part.from_bytes(data=arquivo_bytes, mime_type=mime_type),
-                    prompt
-                ],
-                config=types.GenerateContentConfig(
-                    response_mime_type="application/json",
-                    response_schema=NotaFiscal,
-                    temperature=0.1
-                )
-            )
-            return json.loads(response.text)
-        except Exception as e:
-            msg_erro = str(e).upper()
-            if ("503" in msg_erro or "UNAVAILABLE" in msg_erro or "RESOURCE_EXHAUSTED" in msg_erro or "429" in msg_erro) and tentativa < max_tentativas:
-                time.sleep(tempo_espera)
-                tempo_espera *= 2
-                continue
-            raise e
+    # 1. TENTATIVA COM O MODELO PRINCIPAL (gemini-3.6-flash)
+    try:
+        return extrair_com_modelo_gemini(client, 'gemini-3.6-flash', arquivo_bytes, mime_type)
+    except Exception as e_principal:
+        msg_erro = str(e_principal).upper()
+        
+        # Se for estouro de cota / limite (429 / RESOURCE_EXHAUSTED / 503 / UNAVAILABLE), aciona o fallback
+        if "429" in msg_erro or "RESOURCE_EXHAUSTED" in msg_erro or "503" in msg_erro or "UNAVAILABLE" in msg_erro:
+            st.warning("⚠️ Limite ou sobrecarga no modelo principal (Gemini 3.6 Flash). Redirecionando automaticamente para o Gemini 2.5 Flash...")
+            
+            # 2. TENTATIVA DE FALLBACK DIRETO (gemini-2.5-flash)
+            try:
+                return extrair_com_modelo_gemini(client, 'gemini-2.5-flash', arquivo_bytes, mime_type)
+            except Exception as e_fallback:
+                raise RuntimeError(f"Erro no Gemini 3.6: {e_principal} | Erro no Fallback (Gemini 2.5): {e_fallback}")
+        else:
+            raise e_principal
 
 # -----------------------------------------------------------------------------
 # 6. EXPANDER: LEITURA AUTOMÁTICA POR IA (PDF / IMAGEM)
@@ -161,87 +168,84 @@ with st.expander("🤖 Leitura Automática de NF por PDF ou Foto (IA)", expanded
                 mime_type = f"image/{fmt.lower()}"
             
             if st.button("🚀 Extrair Dados da Nota", type="primary"):
-                with st.spinner("O Gemini está lendo o documento e extraindo o cabeçalho + itens..."):
+                with st.spinner("Analisando o documento com IA..."):
                     try:
                         dados = processar_nota_fiscal(bytes_data, mime_type)
 
-                        # Tratamento seguro do Número da NF
-                        raw_nf = str(dados.get("numero_nota", "")).strip()
-                        nf_num = raw_nf if raw_nf and raw_nf.lower() != "null" else "S/N"
+                        if dados:
+                            # Tratamento seguro do Número da NF
+                            raw_nf = str(dados.get("numero_nota", "")).strip()
+                            nf_num = raw_nf if raw_nf and raw_nf.lower() != "null" else "S/N"
 
-                        # Tratamento seguro do Fornecedor
-                        raw_forn = str(dados.get("fornecedor_nome", "")).strip()
-                        forn = raw_forn if raw_forn and raw_forn.lower() != "null" else "Fornecedor Não Identificado"
+                            # Tratamento seguro do Fornecedor
+                            raw_forn = str(dados.get("fornecedor_nome", "")).strip()
+                            forn = raw_forn if raw_forn and raw_forn.lower() != "null" else "Fornecedor Não Identificado"
 
-                        # Tratamento seguro da Data de Emissão
-                        dt_emissao_str = str(dados.get("data_emissao", "")).strip()
-                        try:
-                            dt_emissao_obj = datetime.strptime(dt_emissao_str, '%Y-%m-%d').date()
-                        except:
-                            dt_emissao_obj = date.today()
-
-                        # Tratamento seguro do Valor Total
-                        try:
-                            v_total_nf = float(dados.get("valor_total", 0.0))
-                        except:
-                            v_total_nf = 0.0
-
-                        # ATUALIZAÇÃO DIRETA NO SESSION STATE (FORÇA OS INPUTS VISUAIS A SE ATUALIZAREM)
-                        st.session_state.cad_nf = nf_num
-                        st.session_state.cad_data = dt_emissao_obj
-                        st.session_state.cad_forn = forn
-                        st.session_state.cad_val_nf = v_total_nf
-
-                        # Limpa a lista para receber os itens da nova nota
-                        st.session_state.lista_itens = []
-
-                        itens_lidos = dados.get("itens", [])
-                        garantia_padrao = 12
-
-                        for it in itens_lidos:
-                            desc = str(it.get("descricao", "Item Sem Nome")).strip()
+                            # Tratamento seguro da Data de Emissão
+                            dt_emissao_str = str(dados.get("data_emissao", "")).strip()
                             try:
-                                qtd = int(float(it.get("quantidade", 1)))
-                                if qtd <= 0: qtd = 1
+                                dt_emissao_obj = datetime.strptime(dt_emissao_str, '%Y-%m-%d').date()
                             except:
-                                qtd = 1
-                            
-                            try:
-                                v_unit = float(it.get("valor_unitario", 0.0))
-                            except:
-                                v_unit = 0.0
+                                dt_emissao_obj = date.today()
 
+                            # Tratamento seguro do Valor Total
                             try:
-                                v_tot_item = float(it.get("valor_total_item", 0.0))
-                                if v_tot_item == 0.0 and v_unit > 0:
+                                v_total_nf = float(dados.get("valor_total", 0.0))
+                            except:
+                                v_total_nf = 0.0
+
+                            # ATUALIZAÇÃO DIRETA NO SESSION STATE
+                            st.session_state.cad_nf = nf_num
+                            st.session_state.cad_data = dt_emissao_obj
+                            st.session_state.cad_forn = forn
+                            st.session_state.cad_val_nf = v_total_nf
+
+                            # Limpa a lista para receber os itens da nova nota
+                            st.session_state.lista_itens = []
+
+                            itens_lidos = dados.get("itens", [])
+                            garantia_padrao = 12
+
+                            for it in itens_lidos:
+                                desc = str(it.get("descricao", "Item Sem Nome")).strip()
+                                try:
+                                    qtd = int(float(it.get("quantidade", 1)))
+                                    if qtd <= 0: qtd = 1
+                                except:
+                                    qtd = 1
+                                
+                                try:
+                                    v_unit = float(it.get("valor_unitario", 0.0))
+                                except:
+                                    v_unit = 0.0
+
+                                try:
+                                    v_tot_item = float(it.get("valor_total_item", 0.0))
+                                    if v_tot_item == 0.0 and v_unit > 0:
+                                        v_tot_item = round(qtd * v_unit, 2)
+                                except:
                                     v_tot_item = round(qtd * v_unit, 2)
-                            except:
-                                v_tot_item = round(qtd * v_unit, 2)
 
-                            dt_venc = pd.to_datetime(dt_emissao_obj) + pd.DateOffset(months=garantia_padrao)
+                                dt_venc = pd.to_datetime(dt_emissao_obj) + pd.DateOffset(months=garantia_padrao)
 
-                            st.session_state.lista_itens.append({
-                                "NF": nf_num,
-                                "data_emissao": dt_emissao_obj.strftime('%Y-%m-%d'),
-                                "valor_total_nf": v_total_nf,
-                                "Item": desc,
-                                "quantidade": qtd,
-                                "valor_unitario": v_unit,
-                                "valor_total_item": v_tot_item,
-                                "Fornecedor": forn,
-                                "meses_garantia": garantia_padrao,
-                                "data_vencimento": dt_venc.strftime('%Y-%m-%d')
-                            })
+                                st.session_state.lista_itens.append({
+                                    "NF": nf_num,
+                                    "data_emissao": dt_emissao_obj.strftime('%Y-%m-%d'),
+                                    "valor_total_nf": v_total_nf,
+                                    "Item": desc,
+                                    "quantidade": qtd,
+                                    "valor_unitario": v_unit,
+                                    "valor_total_item": v_tot_item,
+                                    "Fornecedor": forn,
+                                    "meses_garantia": garantia_padrao,
+                                    "data_vencimento": dt_venc.strftime('%Y-%m-%d')
+                                })
 
-                        st.success(f"✅ Sucesso! Extraído: NF Nº **{nf_num}** | Fornecedor: **{forn}** | Valor Total: **R$ {v_total_nf:,.2f}** | Itens: **{len(itens_lidos)}**")
-                        st.rerun()
+                            st.success(f"✅ Sucesso! Extraído: NF Nº **{nf_num}** | Fornecedor: **{forn}** | Valor Total: **R$ {v_total_nf:,.2f}** | Itens: **{len(itens_lidos)}**")
+                            st.rerun()
 
                     except Exception as e:
-                        msg_e = str(e).upper()
-                        if "503" in msg_e or "UNAVAILABLE" in msg_e or "RESOURCE_EXHAUSTED" in msg_e or "429" in msg_e:
-                            st.warning("⚠️ O serviço do Gemini está temporariamente sobrecarregado. Aguarde alguns instantes e tente novamente.")
-                        else:
-                            st.error(f"Erro no processamento da nota: {e}")
+                        st.error(f"Não foi possível processar a nota fiscal: {e}")
 
 # -----------------------------------------------------------------------------
 # 7. FORMULÁRIO DE CADASTRO MANUAL OU REVISÃO DA IA
