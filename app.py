@@ -89,7 +89,7 @@ def carregar_dados():
 df_existente = carregar_dados()
 
 # -----------------------------------------------------------------------------
-# 5. FUNÇÃO DE LEITURA DE NF VIA GEMINI (MULTICHAVES EM CASCATA)
+# 5. FUNÇÃO DE LEITURA DE NF VIA GEMINI (MULTICHAVES COM MENSAGEM AMIGÁVEL)
 # -----------------------------------------------------------------------------
 PROMPT_EXTRACAO = """
 Analise esta Nota Fiscal/Cupom Fiscal/DANFE com atenção total aos dados do CABEÇALHO e DOS ITENS:
@@ -120,13 +120,12 @@ def processar_nota_fiscal(arquivo_bytes, mime_type):
     # Coleta todas as chaves GEMINI_API_KEY disponíveis nos secrets
     chaves = []
     
-    # Busca por GEMINI_API_KEY, GEMINI_API_KEY_2, GEMINI_API_KEY_3, etc.
     if "GEMINI_API_KEY" in st.secrets:
         chaves.append(st.secrets["GEMINI_API_KEY"])
     elif st.secrets.get("connections", {}).get("gsheets", {}).get("GEMINI_API_KEY"):
         chaves.append(st.secrets["connections"]["gsheets"]["GEMINI_API_KEY"])
         
-    for k in range(2, 10):
+    for k in range(2, 15):
         chave_var = f"GEMINI_API_KEY_{k}"
         if chave_var in st.secrets:
             chaves.append(st.secrets[chave_var])
@@ -134,22 +133,30 @@ def processar_nota_fiscal(arquivo_bytes, mime_type):
     if not chaves:
         raise ValueError("Nenhuma chave 'GEMINI_API_KEY' foi encontrada nos secrets do Streamlit.")
 
-    erros_acumulados = []
-
+    # Percorre todas as chaves cadastradas
     for idx, key in enumerate(chaves, start=1):
-        try:
-            return extrair_com_chave(key, arquivo_bytes, mime_type)
-        except Exception as e:
-            msg_erro = str(e).upper()
-            if "429" in msg_erro or "RESOURCE_EXHAUSTED" in msg_erro or "503" in msg_erro or "UNAVAILABLE" in msg_erro:
-                erros_acumulados.append(f"Chave {idx}: {e}")
-                if idx < len(chaves):
-                    st.warning(f"⚠️ Limite atingido na chave {idx}. Alternando para a chave {idx+1}...")
-                continue
-            else:
-                raise e
+        for tentativa in range(1, 3):
+            try:
+                return extrair_com_chave(key, arquivo_bytes, mime_type)
+            except Exception as e:
+                msg_erro = str(e).upper()
+                if "429" in msg_erro or "RESOURCE_EXHAUSTED" in msg_erro or "503" in msg_erro or "UNAVAILABLE" in msg_erro:
+                    if tentativa == 1:
+                        time.sleep(3)
+                        continue
+                    else:
+                        break
+                else:
+                    raise e
 
-    raise RuntimeError(f"Todas as {len(chaves)} chaves cadastradas atingiram o limite diário. Erros: {' | '.join(erros_acumulados)}")
+    # Caso todas as chaves tenham atingido a cota, exibe a mensagem harmoniosa na tela
+    st.info(
+        "⏳ **Limite diário de leitura atingido**\n\n"
+        "O volume gratuito de extrações com Inteligência Artificial para hoje chegou ao limite nas chaves cadastradas.\n\n"
+        "• **O que fazer?** Aguarde alguns instantes (ou cerca de 1 minuto) e tente novamente, pois as janelas de requisição são liberadas continuamente.\n"
+        "• **Alternativa:** Você também pode utilizar o formulário abaixo para realizar o **cadastro manual** dos itens normalmente!"
+    )
+    return None
 
 # -----------------------------------------------------------------------------
 # 6. EXPANDER: LEITURA AUTOMÁTICA POR IA (PDF / IMAGEM)
