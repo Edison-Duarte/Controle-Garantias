@@ -168,7 +168,7 @@ def processar_nota_fiscal_groq(arquivo_bytes, mime_type):
     data_url = f"data:{mime_type};base64,{base64_file}"
 
     completion = client.chat.completions.create(
-        model="llama-3.2-11b-vision-preview",
+        model="llama-3.2-90b-vision-preview",
         messages=[
             {
                 "role": "user",
