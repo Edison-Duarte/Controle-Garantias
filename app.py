@@ -100,9 +100,10 @@ Analise esta Nota Fiscal/Cupom Fiscal/DANFE com atenção total aos dados do CAB
 - Identifique cada item/produto individual da lista com descrição, quantidade, valor unitário e valor total.
 """
 
-def extrair_com_modelo_gemini(client, modelo, arquivo_bytes, mime_type):
+def extrair_com_chave(api_key, arquivo_bytes, mime_type):
+    client = genai.Client(api_key=api_key)
     response = client.models.generate_content(
-        model=modelo,
+        model='gemini-3.6-flash',
         contents=[
             types.Part.from_bytes(data=arquivo_bytes, mime_type=mime_type),
             PROMPT_EXTRACAO
@@ -116,30 +117,32 @@ def extrair_com_modelo_gemini(client, modelo, arquivo_bytes, mime_type):
     return json.loads(response.text)
 
 def processar_nota_fiscal(arquivo_bytes, mime_type):
-    api_key = st.secrets.get("GEMINI_API_KEY")
-    if not api_key:
-        api_key = st.secrets.get("connections", {}).get("gsheets", {}).get("GEMINI_API_KEY")
+    key_1 = st.secrets.get("GEMINI_API_KEY")
+    if not key_1:
+        key_1 = st.secrets.get("connections", {}).get("gsheets", {}).get("GEMINI_API_KEY")
     
-    if not api_key:
+    if not key_1:
         raise ValueError("Chave 'GEMINI_API_KEY' não foi encontrada nos secrets do Streamlit.")
 
-    client = genai.Client(api_key=api_key)
-
-    # 1. TENTATIVA COM O MODELO PRINCIPAL (gemini-3.6-flash)
+    # 1. TENTATIVA COM A CHAVE PRINCIPAL
     try:
-        return extrair_com_modelo_gemini(client, 'gemini-3.6-flash', arquivo_bytes, mime_type)
+        return extrair_com_chave(key_1, arquivo_bytes, mime_type)
     except Exception as e_principal:
         msg_erro = str(e_principal).upper()
         
-        # Se for estouro de cota / limite (429 / RESOURCE_EXHAUSTED / 503 / UNAVAILABLE), aciona o fallback
+        # Se atingiu o limite de quota (429 / RESOURCE_EXHAUSTED / 503)
         if "429" in msg_erro or "RESOURCE_EXHAUSTED" in msg_erro or "503" in msg_erro or "UNAVAILABLE" in msg_erro:
-            st.warning("⚠️ Limite ou sobrecarga no modelo principal (Gemini 3.6 Flash). Redirecionando automaticamente para o Gemini 2.5 Flash...")
+            key_2 = st.secrets.get("GEMINI_API_KEY_2")
             
-            # 2. TENTATIVA DE FALLBACK DIRETO (gemini-2.5-flash)
-            try:
-                return extrair_com_modelo_gemini(client, 'gemini-2.5-flash', arquivo_bytes, mime_type)
-            except Exception as e_fallback:
-                raise RuntimeError(f"Erro no Gemini 3.6: {e_principal} | Erro no Fallback (Gemini 2.5): {e_fallback}")
+            if key_2:
+                st.warning("⚠️ Limite atingido na chave principal do Gemini. Redirecionando automaticamente para a chave secundária...")
+                try:
+                    # 2. TENTATIVA COM A CHAVE SECUNDÁRIA
+                    return extrair_com_chave(key_2, arquivo_bytes, mime_type)
+                except Exception as e_secundario:
+                    raise RuntimeError(f"Erro na chave 1: {e_principal} | Erro na chave 2: {e_secundario}")
+            else:
+                raise RuntimeError(f"Limite atingido na chave principal e 'GEMINI_API_KEY_2' não está configurada nos Secrets. Erro: {e_principal}")
         else:
             raise e_principal
 
