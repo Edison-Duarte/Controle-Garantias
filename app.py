@@ -163,19 +163,13 @@ def processar_nota_fiscal_groq(arquivo_bytes, mime_type):
         raise ValueError("Chave 'GROQ_API_KEY' não configurada nos secrets do Streamlit.")
 
     client = Groq(api_key=api_key)
-    
-    base64_file = base64.b64encode(arquivo_bytes).decode('utf-8')
-    data_url = f"data:{mime_type};base64,{base64_file}"
 
     completion = client.chat.completions.create(
-        model="llama-3.2-90b-vision-preview",
+        model="llama-3.3-70b-versatile",
         messages=[
             {
                 "role": "user",
-                "content": [
-                    {"type": "text", "text": PROMPT_EXTRACAO},
-                    {"type": "image_url", "image_url": {"url": data_url}}
-                ]
+                "content": PROMPT_EXTRACAO
             }
         ],
         temperature=0.1,
