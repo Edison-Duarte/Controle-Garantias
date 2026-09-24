@@ -89,7 +89,7 @@ def carregar_dados():
 df_existente = carregar_dados()
 
 # -----------------------------------------------------------------------------
-# 5. FUNÇÃO DE LEITURA DE NF VIA GEMINI (COM FALLBACK DE CHAVE SECUNDÁRIA)
+# 5. FUNÇÃO DE LEITURA DE NF VIA GEMINI (MULTICHAVES EM CASCATA)
 # -----------------------------------------------------------------------------
 PROMPT_EXTRACAO = """
 Analise esta Nota Fiscal/Cupom Fiscal/DANFE com atenção total aos dados do CABEÇALHO e DOS ITENS:
@@ -117,34 +117,39 @@ def extrair_com_chave(api_key, arquivo_bytes, mime_type):
     return json.loads(response.text)
 
 def processar_nota_fiscal(arquivo_bytes, mime_type):
-    key_1 = st.secrets.get("GEMINI_API_KEY")
-    if not key_1:
-        key_1 = st.secrets.get("connections", {}).get("gsheets", {}).get("GEMINI_API_KEY")
+    # Coleta todas as chaves GEMINI_API_KEY disponíveis nos secrets
+    chaves = []
     
-    if not key_1:
-        raise ValueError("Chave 'GEMINI_API_KEY' não foi encontrada nos secrets do Streamlit.")
-
-    # 1. TENTATIVA COM A CHAVE PRINCIPAL
-    try:
-        return extrair_com_chave(key_1, arquivo_bytes, mime_type)
-    except Exception as e_principal:
-        msg_erro = str(e_principal).upper()
+    # Busca por GEMINI_API_KEY, GEMINI_API_KEY_2, GEMINI_API_KEY_3, etc.
+    if "GEMINI_API_KEY" in st.secrets:
+        chaves.append(st.secrets["GEMINI_API_KEY"])
+    elif st.secrets.get("connections", {}).get("gsheets", {}).get("GEMINI_API_KEY"):
+        chaves.append(st.secrets["connections"]["gsheets"]["GEMINI_API_KEY"])
         
-        # Se for erro de cota / limite (429 / RESOURCE_EXHAUSTED / 503 / UNAVAILABLE)
-        if "429" in msg_erro or "RESOURCE_EXHAUSTED" in msg_erro or "503" in msg_erro or "UNAVAILABLE" in msg_erro:
-            key_2 = st.secrets.get("GEMINI_API_KEY_2")
-            
-            if key_2:
-                st.warning("⚠️ Limite atingido na chave principal do Gemini. Redirecionando automaticamente para a chave secundária...")
-                try:
-                    # 2. TENTATIVA COM A CHAVE SECUNDÁRIA
-                    return extrair_com_chave(key_2, arquivo_bytes, mime_type)
-                except Exception as e_secundario:
-                    raise RuntimeError(f"Erro na chave 1: {e_principal} | Erro na chave 2: {e_secundario}")
+    for k in range(2, 10):
+        chave_var = f"GEMINI_API_KEY_{k}"
+        if chave_var in st.secrets:
+            chaves.append(st.secrets[chave_var])
+
+    if not chaves:
+        raise ValueError("Nenhuma chave 'GEMINI_API_KEY' foi encontrada nos secrets do Streamlit.")
+
+    erros_acumulados = []
+
+    for idx, key in enumerate(chaves, start=1):
+        try:
+            return extrair_com_chave(key, arquivo_bytes, mime_type)
+        except Exception as e:
+            msg_erro = str(e).upper()
+            if "429" in msg_erro or "RESOURCE_EXHAUSTED" in msg_erro or "503" in msg_erro or "UNAVAILABLE" in msg_erro:
+                erros_acumulados.append(f"Chave {idx}: {e}")
+                if idx < len(chaves):
+                    st.warning(f"⚠️ Limite atingido na chave {idx}. Alternando para a chave {idx+1}...")
+                continue
             else:
-                raise RuntimeError(f"Limite atingido na chave principal e 'GEMINI_API_KEY_2' não está configurada nos Secrets. Erro: {e_principal}")
-        else:
-            raise e_principal
+                raise e
+
+    raise RuntimeError(f"Todas as {len(chaves)} chaves cadastradas atingiram o limite diário. Erros: {' | '.join(erros_acumulados)}")
 
 # -----------------------------------------------------------------------------
 # 6. EXPANDER: LEITURA AUTOMÁTICA POR IA (PDF / IMAGEM)
