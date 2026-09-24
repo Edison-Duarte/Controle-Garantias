@@ -89,7 +89,7 @@ def carregar_dados():
 df_existente = carregar_dados()
 
 # -----------------------------------------------------------------------------
-# 5. FUNÇÃO DE LEITURA DE NF VIA GEMINI (COM FALLBACK PARA GEMINI-2.5-FLASH)
+# 5. FUNÇÃO DE LEITURA DE NF VIA GEMINI (COM FALLBACK DE CHAVE SECUNDÁRIA)
 # -----------------------------------------------------------------------------
 PROMPT_EXTRACAO = """
 Analise esta Nota Fiscal/Cupom Fiscal/DANFE com atenção total aos dados do CABEÇALHO e DOS ITENS:
@@ -130,7 +130,7 @@ def processar_nota_fiscal(arquivo_bytes, mime_type):
     except Exception as e_principal:
         msg_erro = str(e_principal).upper()
         
-        # Se atingiu o limite de quota (429 / RESOURCE_EXHAUSTED / 503)
+        # Se for erro de cota / limite (429 / RESOURCE_EXHAUSTED / 503 / UNAVAILABLE)
         if "429" in msg_erro or "RESOURCE_EXHAUSTED" in msg_erro or "503" in msg_erro or "UNAVAILABLE" in msg_erro:
             key_2 = st.secrets.get("GEMINI_API_KEY_2")
             
