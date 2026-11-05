@@ -49,6 +49,8 @@ if 'cad_forn' not in st.session_state:
     st.session_state.cad_forn = ""
 if 'cad_val_nf' not in st.session_state:
     st.session_state.cad_val_nf = 0.0
+if 'cad_obs' not in st.session_state:
+    st.session_state.cad_obs = ""
 
 # -----------------------------------------------------------------------------
 # 4. CONEXÃO COM GOOGLE SHEETS E FUNÇÕES AUXILIARES
@@ -78,13 +80,17 @@ def carregar_dados():
                 if col in df.columns:
                     df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0.0).astype(float)
             
+            # Garantir coluna de observação caso venha vazia de registros antigos
+            if 'observacao' not in df.columns:
+                df['observacao'] = ""
+
             colunas_data = ['data_emissao', 'data_vencimento']
             for col in colunas_data:
                 if col in df.columns:
                     df[col] = pd.to_datetime(df[col], errors='coerce').dt.date
         return df
     except Exception as e:
-        return pd.DataFrame(columns=['NF', 'data_emissao', 'valor_total_nf', 'Item', 'quantidade', 'valor_unitario', 'valor_total_item', 'Fornecedor', 'meses_garantia', 'data_vencimento'])
+        return pd.DataFrame(columns=['NF', 'data_emissao', 'valor_total_nf', 'Item', 'quantidade', 'valor_unitario', 'valor_total_item', 'Fornecedor', 'meses_garantia', 'data_vencimento', 'observacao'])
 
 df_existente = carregar_dados()
 
@@ -117,7 +123,6 @@ def extrair_com_chave(api_key, arquivo_bytes, mime_type):
     return json.loads(response.text)
 
 def processar_nota_fiscal(arquivo_bytes, mime_type):
-    # Coleta todas as chaves GEMINI_API_KEY disponíveis nos secrets
     chaves = []
     
     if "GEMINI_API_KEY" in st.secrets:
@@ -133,7 +138,6 @@ def processar_nota_fiscal(arquivo_bytes, mime_type):
     if not chaves:
         raise ValueError("Nenhuma chave 'GEMINI_API_KEY' foi encontrada nos secrets do Streamlit.")
 
-    # Percorre todas as chaves cadastradas
     for idx, key in enumerate(chaves, start=1):
         for tentativa in range(1, 3):
             try:
@@ -149,7 +153,6 @@ def processar_nota_fiscal(arquivo_bytes, mime_type):
                 else:
                     raise e
 
-    # Caso todas as chaves tenham atingido a cota, exibe a mensagem harmoniosa na tela
     st.info(
         "⏳ **Limite diário de leitura atingido**\n\n"
         "O volume gratuito de extrações com Inteligência Artificial para hoje chegou ao limite nas chaves cadastradas.\n\n"
@@ -188,34 +191,29 @@ with st.expander("🤖 Leitura Automática de NF por PDF ou Foto (IA)", expanded
                         dados = processar_nota_fiscal(bytes_data, mime_type)
 
                         if dados:
-                            # Tratamento seguro do Número da NF
                             raw_nf = str(dados.get("numero_nota", "")).strip()
                             nf_num = raw_nf if raw_nf and raw_nf.lower() != "null" else "S/N"
 
-                            # Tratamento seguro do Fornecedor
                             raw_forn = str(dados.get("fornecedor_nome", "")).strip()
                             forn = raw_forn if raw_forn and raw_forn.lower() != "null" else "Fornecedor Não Identificado"
 
-                            # Tratamento seguro da Data de Emissão
                             dt_emissao_str = str(dados.get("data_emissao", "")).strip()
                             try:
                                 dt_emissao_obj = datetime.strptime(dt_emissao_str, '%Y-%m-%d').date()
                             except:
                                 dt_emissao_obj = date.today()
 
-                            # Tratamento seguro do Valor Total
                             try:
                                 v_total_nf = float(dados.get("valor_total", 0.0))
                             except:
                                 v_total_nf = 0.0
 
-                            # ATUALIZAÇÃO DIRETA NO SESSION STATE
                             st.session_state.cad_nf = nf_num
                             st.session_state.cad_data = dt_emissao_obj
                             st.session_state.cad_forn = forn
                             st.session_state.cad_val_nf = v_total_nf
+                            st.session_state.cad_obs = "" # Reseta a obs ao carregar nova nota
 
-                            # Limpa a lista para receber os itens da nova nota
                             st.session_state.lista_itens = []
 
                             itens_lidos = dados.get("itens", [])
@@ -253,21 +251,22 @@ with st.expander("🤖 Leitura Automática de NF por PDF ou Foto (IA)", expanded
                                     "valor_total_item": v_tot_item,
                                     "Fornecedor": forn,
                                     "meses_garantia": garantia_padrao,
-                                    "data_vencimento": dt_venc.strftime('%Y-%m-%d')
+                                    "data_vencimento": dt_venc.strftime('%Y-%m-%d'),
+                                    "observacao": ""
                                 })
 
                             st.success(f"✅ Sucesso! Extraído: NF Nº **{nf_num}** | Fornecedor: **{forn}** | Valor Total: **R$ {v_total_nf:,.2f}** | Itens: **{len(itens_lidos)}**")
                             st.rerun()
 
                     except Exception as e:
-                        st.error(f"Não foi possível processar a nota fiscal: {e}")
+                        st.error(f"Erro inesperado no processamento: {e}")
 
 # -----------------------------------------------------------------------------
 # 7. FORMULÁRIO DE CADASTRO MANUAL OU REVISÃO DA IA
 # -----------------------------------------------------------------------------
 def limpar_formulario():
     st.session_state.lista_itens = []
-    for key in ['cad_nf', 'cad_data', 'cad_forn', 'cad_val_nf']:
+    for key in ['cad_nf', 'cad_data', 'cad_forn', 'cad_val_nf', 'cad_obs']:
         if key in st.session_state:
             del st.session_state[key]
 
@@ -279,6 +278,9 @@ with st.expander("📝 Cadastrar / Revisar Itens para Salvar", expanded=True if 
     data_emissao_comum = c2.date_input("Data da Emissão", format="DD/MM/YYYY", key="cad_data")
     fornecedor_comum = c3.text_input("Fornecedor", key="cad_forn")
     valor_total_nf_comum = c4.number_input("Valor Total da NF (R$)", min_value=0.0, step=10.0, format="%.2f", key="cad_val_nf")
+
+    # Campo de Observação Geral da Nota
+    observacao_comum = st.text_area("💬 Observação Geral da Nota (Ex: Lâmpada, Cimento, Andra, HC, etc.)", key="cad_obs", placeholder="Insira palavras-chave relevantes para facilitar buscas futuras...")
 
     st.divider()
     st.markdown("#### Adicionar / Revisar Itens da Nota")
@@ -305,7 +307,8 @@ with st.expander("📝 Cadastrar / Revisar Itens para Salvar", expanded=True if 
                 "valor_total_item": v_total_item,
                 "Fornecedor": fornecedor_comum,
                 "meses_garantia": int(item_garantia),
-                "data_vencimento": dt_venc.strftime('%Y-%m-%d')
+                "data_vencimento": dt_venc.strftime('%Y-%m-%d'),
+                "observacao": str(observacao_comum).strip()
             })
             st.toast(f"Item '{item_nome}' adicionado!")
             st.rerun()
@@ -316,15 +319,16 @@ with st.expander("📝 Cadastrar / Revisar Itens para Salvar", expanded=True if 
         st.write("---")
         st.subheader("📋 Itens Extraídos Prontos para Gravação")
         
-        # Sincroniza o cabeçalho caso o usuário altere os campos do topo antes de salvar
+        # Sincroniza o cabeçalho e observação geral caso o usuário altere antes de salvar
         for item in st.session_state.lista_itens:
             item["NF"] = str(st.session_state.cad_nf).strip()
             item["data_emissao"] = st.session_state.cad_data.strftime('%Y-%m-%d')
             item["Fornecedor"] = st.session_state.cad_forn
             item["valor_total_nf"] = float(st.session_state.cad_val_nf)
+            item["observacao"] = str(st.session_state.cad_obs).strip()
 
         df_temp = pd.DataFrame(st.session_state.lista_itens)
-        st.dataframe(df_temp[['NF', 'data_emissao', 'Fornecedor', 'valor_total_nf', 'Item', 'quantidade', 'valor_unitario', 'valor_total_item', 'meses_garantia']], use_container_width=True)
+        st.dataframe(df_temp[['NF', 'data_emissao', 'Fornecedor', 'valor_total_nf', 'Item', 'quantidade', 'valor_unitario', 'valor_total_item', 'observacao', 'meses_garantia']], use_container_width=True)
         
         col_btn1, col_btn2 = st.columns(2)
         col_btn1.button("🗑️ Limpar Formulário", on_click=limpar_formulario)
@@ -364,7 +368,7 @@ if not df.empty:
     
     df['Status'] = df['data_vencimento'].apply(definir_status)
 
-    busca_rapida = st.text_input("🔍 Busca Rápida Avançada:", placeholder="Digite qualquer termo para filtrar a tabela...").strip()
+    busca_rapida = st.text_input("🔍 Busca Rápida Avançada (Busca por Materiais, Fornecedores, NFs ou Palavras-Chave nas Observações):", placeholder="Ex: lâmpada, cimento, Andra, HC...").strip()
     busca_rapida_norm = normalizar_texto(busca_rapida)
 
     col_dt1, col_dt2 = st.columns(2)
@@ -392,11 +396,13 @@ if not df.empty:
     if dt_inicio and dt_fim:
         mask = mask & (df_datas_emissao >= dt_inicio) & (df_datas_emissao <= dt_fim)
 
+    # A busca rápida agora contempla também o campo 'observacao' para palavras-chave
     if busca_rapida_norm:
         mask = mask & (
             df['Item'].apply(normalizar_texto).str.contains(busca_rapida_norm, case=False, na=False) |
             df['Fornecedor'].apply(normalizar_texto).str.contains(busca_rapida_norm, case=False, na=False) |
-            df['NF'].apply(normalizar_texto).str.contains(busca_rapida_norm, case=False, na=False)
+            df['NF'].apply(normalizar_texto).str.contains(busca_rapida_norm, case=False, na=False) |
+            df['observacao'].apply(normalizar_texto).str.contains(busca_rapida_norm, case=False, na=False)
         )
 
     if buscar_materiais:
@@ -411,7 +417,7 @@ if not df.empty:
         nfs_norm = [normalizar_texto(n) for n in buscar_nfs]
         mask = mask & (df['NF'].apply(normalizar_texto).isin(nfs_norm))
     
-    colunas_exibicao = ['NF', 'data_emissao', 'valor_total_nf', 'Item', 'quantidade', 'valor_unitario', 'valor_total_item', 'Fornecedor', 'meses_garantia', 'data_vencimento', 'Status']
+    colunas_exibicao = ['NF', 'data_emissao', 'valor_total_nf', 'Item', 'quantidade', 'valor_unitario', 'valor_total_item', 'observacao', 'Fornecedor', 'meses_garantia', 'data_vencimento', 'Status']
     df_filtrado = df.loc[mask, [c for c in colunas_exibicao if c in df.columns]].copy()
 
     total_gasto = df_filtrado['valor_total_item'].sum() if 'valor_total_item' in df_filtrado.columns else 0.0
@@ -439,6 +445,7 @@ if not df.empty:
             "quantidade": st.column_config.NumberColumn("Qtd", format="%d"),
             "valor_unitario": st.column_config.NumberColumn("Val. Unitário", format="R$ %.2f"),
             "valor_total_item": st.column_config.NumberColumn("Total Item", format="R$ %.2f"),
+            "observacao": st.column_config.TextColumn("Observações da Nota"),
             "meses_garantia": st.column_config.NumberColumn("Meses", format="%d"),
             "data_vencimento": st.column_config.DateColumn("Vencimento", format="DD/MM/YYYY")
         }
